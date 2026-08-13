@@ -197,6 +197,12 @@ score was 0.25, so the candidate correctly did not promote. Generation 2
 restored generation number and champion hash, reproduced the deterministic
 training result, and wrote a distinct checkpoint.
 
+That second process also exposed that the replay buffer had reset instead of
+continuing from generation 1. Checkpoints now persist replay contents and the
+Python RNG state, with a local cross-process regression test. The archived GPU
+artifacts predate that fix; they prove model/generation resume, not replay
+continuity.
+
 Artifacts are stored locally under `runs/runpod-20260813-rtx3090/`, including
 the JSON benchmark, cProfile data, generation logs, and both checkpoints. The
 RunPod account was verified at zero Pods afterward; the temporary lifecycle API

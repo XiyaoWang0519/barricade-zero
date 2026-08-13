@@ -71,6 +71,35 @@ class GenerationDeviceTests(unittest.TestCase):
         )
         self.assertEqual(len(summary["checkpoint_sha256"]), 64)
 
+    def test_resume_restores_replay_and_rng_state(self):
+        from training.generations import GenerationConfig, GenerationTrainer
+
+        config = GenerationConfig(
+            board_size=5,
+            walls_per_player=0,
+            channels=8,
+            residual_blocks=1,
+            self_play_games=2,
+            simulations=1,
+            training_steps=1,
+            batch_size=4,
+            arena_games=2,
+            max_plies=50,
+            seed=405,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            original = GenerationTrainer(config, directory)
+            summary = original.run_generation()
+            expected_replay = list(original.replay)
+            expected_rng_state = original.rng.getstate()
+
+            resumed = GenerationTrainer(config, directory)
+            resumed.resume(summary["checkpoint"])
+
+        self.assertEqual(resumed.generation, 1)
+        self.assertEqual(list(resumed.replay), expected_replay)
+        self.assertEqual(resumed.rng.getstate(), expected_rng_state)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ changing code.
 - Handoff baseline commit before this document: `f2bf187`
 - Python: 3.11+
 - Tests: standard-library `unittest`; do not assume `pytest` is installed
-- Latest committed training suite: **76 tests: 73 passed, 3 CUDA-only skipped
+- Latest committed training suite: **77 tests: 74 passed, 3 CUDA-only skipped
   locally**; all 5 focused evaluator, checkpoint, and generation tests passed
   on an RTX 3090
 - Latest random stress: **1,000 games passed**, wins `[499, 501]`, 51,575 plies
@@ -18,7 +18,9 @@ changing code.
 - Native C++ backend supports board sizes through 9x9 because its wall/edge
   representation uses 64-bit bitsets
 - CUDA evaluation, mixed-precision benchmarking, optimizer steps, checkpoint,
-  resume, balanced arena, and promotion rejection are validated on an RTX 3090
+  model/generation resume, balanced arena, and promotion rejection are
+  validated on an RTX 3090. A regression test added after that run validates
+  cross-process replay-buffer and Python RNG restoration locally.
 - No RunPod Pod remains. The successful GPU test Pod was terminated, so
   there is no ongoing GPU or storage charge.
 
@@ -210,8 +212,11 @@ Full public-IP SSH worked with the registered local `runpod_autorae` key. The
 64x6 benchmark completed in 13.07 seconds at 3,030.12 positions/s; model
 forward took 2.57 seconds, GPU utilization averaged only 3.61%, and peak
 allocated VRAM was about 24.4 MB. A two-generation 9x9 CUDA cycle also passed
-self-play, optimizer, checkpoint, resume, arena, and no-promotion paths. Local
-artifacts are under `runs/runpod-20260813-rtx3090/`.
+self-play, optimizer, checkpoint, model/generation resume, arena, and
+no-promotion paths. That run exposed that replay and Python RNG state were not
+restored across processes; checkpoint persistence now includes both and has a
+local regression test. Local artifacts are under
+`runs/runpod-20260813-rtx3090/`.
 
 The Pod was terminated, the account was verified at zero Pods, and the
 temporary restricted lifecycle key was revoked. The balance changed from

@@ -75,6 +75,14 @@ class GenerationTrainer:
     def resume(self, path: str | Path) -> None:
         payload = load_checkpoint(path, self.champion, map_location=self.device)
         self.generation = int(payload["generation"])
+        training_state = payload.get("metadata", {}).get("training_state", {})
+        replay = training_state.get("replay")
+        if replay is not None:
+            self.replay = ReplayBuffer(self.config.replay_capacity, self.rng)
+            self.replay.extend(replay)
+        rng_state = training_state.get("rng_state")
+        if rng_state is not None:
+            self.rng.setstate(rng_state)
 
     def _self_play(self) -> tuple[int, list[int]]:
         evaluator = NeuralEvaluator(
@@ -161,7 +169,14 @@ class GenerationTrainer:
             self.champion,
             optimizer,
             self.generation,
-            metadata={"summary": summary, "config": asdict(self.config)},
+            metadata={
+                "summary": summary,
+                "config": asdict(self.config),
+                "training_state": {
+                    "replay": list(self.replay),
+                    "rng_state": self.rng.getstate(),
+                },
+            },
         )
         summary["checkpoint"] = str(path)
         summary["checkpoint_sha256"] = file_sha256(path)
