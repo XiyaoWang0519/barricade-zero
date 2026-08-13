@@ -13,6 +13,52 @@ from barricade.state import GameState
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class NeuralEvaluatorTests(unittest.TestCase):
+    def test_evaluation_mode_is_not_reapplied_for_every_batch(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        class CountingNetwork(PolicyValueNetwork):
+            def __init__(self):
+                self.train_calls = 0
+                super().__init__(5, channels=8, residual_blocks=1)
+
+            def train(self, mode=True):
+                self.train_calls += 1
+                return super().train(mode)
+
+        model = CountingNetwork()
+        evaluator = NeuralEvaluator(model)
+        calls_after_initialization = model.train_calls
+        states = [GameState.initial(size=5, walls_per_player=0)]
+        evaluator.evaluate_batch_arrays(states)
+        evaluator.evaluate_batch_arrays(states)
+        self.assertEqual(model.train_calls, calls_after_initialization)
+        model.train()
+        evaluator.evaluate_batch_arrays(states)
+        self.assertEqual(model.train_calls, calls_after_initialization + 2)
+        self.assertFalse(model.training)
+
+    def test_prepared_batch_evaluation_returns_matching_legality(self):
+        from barricade.backend import NativeRulesBackend
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        states = [GameState.initial(size=5, walls_per_player=2)]
+        states.append(states[0].apply_action(states[0].legal_actions()[0]))
+        backend = NativeRulesBackend()
+        evaluator = NeuralEvaluator(
+            PolicyValueNetwork(5, channels=8, residual_blocks=1),
+            encoding_backend=backend,
+        )
+        policies, values, offsets, actions = (
+            evaluator.evaluate_prepared_batch_arrays(states)
+        )
+        expected_offsets, expected_actions = backend.legal_actions_batch(states)
+        self.assertEqual(policies.shape, (2, states[0].action_size))
+        self.assertEqual(values.shape, (2,))
+        np.testing.assert_array_equal(offsets, expected_offsets)
+        np.testing.assert_array_equal(actions, expected_actions)
+
     def test_policy_is_legal_and_normalized_for_both_players(self):
         from neural.evaluator import NeuralEvaluator
         from neural.model import PolicyValueNetwork

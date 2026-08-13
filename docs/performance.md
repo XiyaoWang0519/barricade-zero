@@ -208,3 +208,152 @@ the JSON benchmark, cProfile data, generation logs, and both checkpoints. The
 RunPod account was verified at zero Pods afterward; the temporary lifecycle API
 key and watchdog credential were removed. Observed account balance changed by
 about $0.18 for the complete session.
+
+## End-to-end search optimization series, 2026-08-13
+
+The production workload is unchanged: 9x9, 10 walls per player, 128 concurrent
+games, 8 simulations, 64 channels, 6 residual blocks, seed 51, and a 300-ply
+limit. No search, game, model, precision, or training semantics were reduced.
+
+The benchmark harness now separates timing from profiling. Its default contract
+is one warm-up followed by five unprofiled repetitions. It records each run plus
+median, population standard deviation, median absolute deviation, quartiles,
+and IQR. An optional `--profile` creates one additional cProfile run rather than
+profiling the matched wall-clock repetitions. Reports now include examples/s,
+derived non-model time, game-length and inference-batch distributions, tree
+nodes/expansions, native boundary calls, native legality/encoding/preparation,
+tree traversal/backup, transfer/synchronization, and peak process/GPU memory.
+
+### Local matched result
+
+Environment: Apple Silicon arm64, macOS 26.6, Python 3.14.4, PyTorch 2.13.0,
+10 PyTorch CPU threads and 14 interop threads. These measurements are a stable
+local control and are not an apples-to-apples replacement for the archived RTX
+3090 CUDA result.
+
+| metric | local pre-series median | retained final median | change |
+|---|---:|---:|---:|
+| total seconds | 15.731 | 14.625 | 1.076x faster |
+| model-forward seconds | 13.292 | 14.150 | 0.939x (thermal/runtime variance) |
+| derived non-model seconds | 2.439 | 0.479 | 5.095x faster |
+| positions/s | 2,538.49 | 2,730.44 | +7.56% |
+| examples/s | 320.06 | 344.26 | +7.56% |
+| population standard deviation, seconds | 0.168 | 0.324 | — |
+
+All five final runs produced exactly 39,934 positions, 5,035 examples, 441
+forward calls, 106 draws, and 19,862 reused-root visits. Average inference batch
+was 90.55. Game lengths ranged from 28 to 55 plies with median 39. The unprofiled
+final median spent only 0.479 seconds outside model forward, so model inference
+accounted for approximately 96.7% of local wall time.
+
+The exact final report and separate cProfile data are:
+
+```text
+profiles/native-final-cpu-128.json
+profiles/native-final-cpu-128.prof
+```
+
+### Optimization journal
+
+| attempt | profile hypothesis and implementation | result | decision |
+|---|---|---|---|
+| Stable benchmark contract | cProfile distorted non-model wall time; add warm-up, five repetitions, robust dispersion, a separate profile run, and full-pipeline counters | Reproducible unprofiled control established | retained |
+| Remove duplicated played-move work | A chosen root action was rescanned and its successor materialized twice; use a known-legal advance and direct compact arrays | Non-model median 2.439 -> 2.308 s (-5.4%); total obscured by model variance | retained |
+| Canonicalize inside native encoding | Python created roughly 40,000 canonical `GameState` objects for unmasked search inference | Non-model 2.308 -> 2.191 s (-5.1%); randomized 5x5/9x9 encoding exact | retained |
+| Fuse leaf preparation | Encoding and legality repacked every leaf batch separately; return canonical tensors and CSR legality through one ABI call | Non-model 2.191 -> 2.068 s (-5.6%), total 15.721 -> 15.388 s | retained |
+| Fixed-capacity native action/distance containers | Remove remaining per-state native heap allocation | Non-model 2.068 -> 2.065 s (-0.14%), within noise | rejected and reverted |
+| Complete native MCTS waves | Python descent, PUCT, node graphs, expansion, and backup remained fragmented | Order-balanced A/B: total 16.710 -> 15.863 s (-5.1%), non-model 2.125 -> 1.230 s (-42.1%) | retained |
+| 128-bit legality flood fill | Candidate wall validation dominated native preparation | Focused legality 0.794 -> 0.129 s (-83.8%); production non-model 1.230 -> 0.550 s | retained |
+| Bit-parallel distance planes | Native encoder still used two heap-backed multi-source BFS traversals | Direct encoding timer improved about 2%; matched total 15.292 -> 14.694 s (-3.9%) and non-model 0.550 -> 0.508 s (-7.6%), with exact plane differentials | retained; attribution marked mixed |
+| Guard evaluator mode | Recursive `model.eval()` ran on every forward call | Total 14.694 -> 14.281 s (-2.8%), non-model 0.508 -> 0.461 s | retained |
+| Immutable repetition key | JSON serialization was the largest remaining Python-only item | Non-model 0.461 -> 0.461 s; no measurable gain | rejected and reverted |
+
+The native session uses compact integer node IDs and arena ownership, executes
+selection/state transition/leaf preparation/expansion/backup natively, and
+preserves Python orchestration, model inference, root-noise RNG, action sampling,
+training-example construction, and the Python rules engine as oracle/fallback.
+Python search can be forced for differential and benchmark controls with
+`--python-search`.
+
+### New profile and remaining hotspots
+
+The retained cProfile contains about 2.76 million calls versus about 10.6
+million in the archived original GPU profile. The final instrumented 128-game
+run recorded:
+
+- 39,996 native tree nodes and 39,934 expansions
+- 0.0155 seconds native traversal and selection
+- 0.0218 seconds native expansion and backup
+- 0.2569 seconds native preparation: 0.1212 encoding and 0.1321 legality
+- 1,126 Python/native boundary crossings totaling 0.3195 seconds, including
+  native work
+- 379 MiB peak process RSS
+- 15.97 seconds model forward in the cProfile run; cProfile overhead must not be
+  compared to the unprofiled median
+
+The dominant remaining cost is unequivocally neural inference. The CPU search
+bottleneck has been removed for the primary workload. The top three remaining
+actionable areas were investigated as follows:
+
+1. Native leaf preparation: fused boundary plus 128-bit legality and
+   bit-parallel encoding prototypes were implemented and retained.
+2. Tree traversal/expansion: complete native MCTS waves were implemented;
+   traversal plus expansion is now about 0.04 seconds in the profiled workload.
+3. Python orchestration: repeated evaluator-mode traversal was retained; a
+   repetition-key prototype was neutral and reverted.
+
+After the last major optimization, two consecutive well-founded end-to-end
+attempts improved total median by less than 5%: guarded evaluator mode improved
+2.8%, and the repetition-key prototype produced no measurable component gain.
+Further practical throughput improvement now belongs to the model/GPU frontier:
+CUDA graph capture or `torch.compile`, larger sustained GPU batches, and
+overlapping the approximately 0.26-second native leaf producer with inference.
+Those paths require a CUDA host for valid measurement.
+
+### Local concurrency sweep
+
+Each point uses one warm-up plus five unprofiled matched repetitions. Cost per
+example is elapsed seconds divided by emitted training examples. Peak RSS is
+the maximum observed across the five runs.
+
+| games | seconds median (sigma) | positions/s | examples/s | seconds/example | average batch | median batch | peak RSS | draws |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 6.027 (0.084) | 832.45 | 105.03 | 0.009521 | 9.76 | 14 | 237 MiB | 13 |
+| 32 | 8.863 (0.084) | 1,154.07 | 145.77 | 0.006860 | 20.92 | 29 | 257 MiB | 26 |
+| 64 | 11.521 (0.230) | 1,759.87 | 221.68 | 0.004511 | 45.16 | 64 | 303 MiB | 54 |
+| 128 | 14.625 (0.324) | 2,730.44 | 344.26 | 0.002905 | 90.55 | 128 | 379 MiB | 106 |
+| 256 | 22.749 (1.431) | 3,519.98 | 442.65 | 0.002259 | 142.74 | 179 | 513 MiB | 221 |
+
+JSON artifacts are stored as `profiles/native-scaling-cpu-{16,32,64,256}.json`
+and `profiles/native-final-cpu-128.json`.
+
+### Correctness evidence
+
+- 102 Git-tracked tests passed; 3 CUDA-only tests skipped locally.
+- Randomized reachable native/Python legality and eight-plane encoding
+  differentials pass on 5x5 and 9x9 states.
+- Native and Python MCTS match root visits and policies; native successor state
+  export matches Python on both 5x5 and 9x9.
+- Seeded end-to-end native/Python self-play matches game lengths, wins, draws,
+  positions, forward calls, reuse, canonical training states, policies, and
+  outcomes.
+- The 1,000-game stress test passed with wins `[499, 501]` and 51,575 plies.
+- A standalone UBSan harness exercised 5x5/9x9 batch preparation, 32 native
+  simulation waves, results, subtree advance, stats, and destruction. ASan
+  process startup hangs under the local macOS runtime even for a trivial binary,
+  so UBSan plus bounds assertions are the available local sanitizer evidence.
+- `-Wall -Wextra -Wpedantic`, `compileall`, and `git diff --check` pass.
+
+The two untracked UI HTTP tests owned by the UI workstream cannot bind localhost
+inside the current sandbox; all other broad-discovery tests passed. They are not
+part of the 102-test Git-tracked suite and no UI file was changed here.
+
+### Required CUDA verification
+
+The archived RTX 3090 result (13.07 seconds total, 2.57 seconds forward, roughly
+10.5 seconds non-model) predates the native search series and cannot establish
+the final CUDA median. The local result proves the CPU-search bottleneck is
+removed, but exact final total/model/non-model GPU speedups require the same
+one-warm-up/five-repetition primary run and concurrency sweep on an RTX
+3090/4090. Do not project the 5.095x local non-model speedup onto CUDA as a
+measured result.

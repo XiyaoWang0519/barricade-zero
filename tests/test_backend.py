@@ -12,6 +12,22 @@ from barricade.state import GameState
 
 
 class RulesBackendTests(unittest.TestCase):
+    def test_native_backend_records_boundary_metrics(self):
+        from barricade.backend import NativeRulesBackend
+
+        backend = NativeRulesBackend(collect_metrics=True)
+        state = GameState.initial(size=5, walls_per_player=2)
+        backend.legal_actions(state)
+        backend.legal_actions_batch([state])
+        backend.encode_batch([state])
+
+        self.assertEqual(backend.boundary_calls, 3)
+        self.assertEqual(backend.legal_action_calls, 2)
+        self.assertEqual(backend.encoding_calls, 1)
+        self.assertGreaterEqual(backend.boundary_seconds, 0.0)
+        self.assertGreaterEqual(backend.legal_action_seconds, 0.0)
+        self.assertGreaterEqual(backend.encoding_seconds, 0.0)
+
     @classmethod
     def setUpClass(cls):
         library = Path(__file__).parents[1] / "native" / "libbarricade_rules.so"
@@ -102,6 +118,45 @@ class RulesBackendTests(unittest.TestCase):
         self.assertTrue(encoded.flags.c_contiguous)
         expected = np.asarray([encode_state(state) for state in states], dtype=np.float32)
         np.testing.assert_array_equal(encoded, expected)
+
+    def test_native_canonical_batch_encoding_matches_python_on_both_turns(self):
+        from barricade.backend import NativeRulesBackend
+
+        rng = random.Random(812)
+        for size, walls in ((5, 2), (9, 10)):
+            states = []
+            state = GameState.initial(size=size, walls_per_player=walls)
+            for _ in range(40):
+                if state.is_terminal():
+                    state = GameState.initial(size=size, walls_per_player=walls)
+                states.append(state)
+                state = state.apply_action(rng.choice(state.legal_actions()))
+
+            encoded = NativeRulesBackend().encode_canonical_batch(states)
+            expected = np.asarray(
+                [encode_state(state.canonical()) for state in states], dtype=np.float32
+            )
+            np.testing.assert_allclose(encoded, expected, rtol=0.0, atol=1e-6)
+
+    def test_native_prepared_batch_matches_separate_encoding_and_legality(self):
+        from barricade.backend import NativeRulesBackend
+
+        backend = NativeRulesBackend()
+        rng = random.Random(913)
+        states = []
+        state = GameState.initial(size=9, walls_per_player=10)
+        for _ in range(32):
+            states.append(state)
+            state = state.apply_action(rng.choice(state.legal_actions()))
+            if state.is_terminal():
+                break
+
+        encoded, offsets, actions = backend.prepare_batch(states)
+        expected_encoded = backend.encode_canonical_batch(states)
+        expected_offsets, expected_actions = backend.legal_actions_batch(states)
+        np.testing.assert_array_equal(encoded, expected_encoded)
+        np.testing.assert_array_equal(offsets, expected_offsets)
+        np.testing.assert_array_equal(actions, expected_actions)
 
     def test_python_batch_encoding_has_same_contract(self):
         states = [GameState.initial(size=5, walls_per_player=4)] * 2

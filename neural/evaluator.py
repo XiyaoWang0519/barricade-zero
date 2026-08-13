@@ -24,11 +24,16 @@ class NeuralEvaluator:
     ) -> None:
         self.device = torch.device(device)
         self.model = model.to(self.device)
+        self.model.eval()
         self.mixed_precision = bool(mixed_precision) and self.device.type == "cuda"
         self.forward_calls = 0
         self.positions_evaluated = 0
+        self.batch_sizes: list[int] = []
         self.model_forward_seconds = 0.0
         self.host_to_device_transfers = 0
+        self.host_to_device_seconds = 0.0
+        self.device_synchronization_calls = 0
+        self.device_synchronization_seconds = 0.0
         self.encoding_backend = encoding_backend or load_rules_backend()
 
     @property
@@ -37,31 +42,40 @@ class NeuralEvaluator:
 
     def _synchronize(self) -> None:
         if self.device.type == "cuda":
+            started = time.perf_counter()
             torch.cuda.synchronize(self.device)
+            self.device_synchronization_calls += 1
+            self.device_synchronization_seconds += time.perf_counter() - started
 
     def _move_to_device(self, tensor: torch.Tensor) -> torch.Tensor:
         if tensor.device == self.device:
             return tensor
+        started = time.perf_counter()
         self.host_to_device_transfers += 1
-        return tensor.to(
+        result = tensor.to(
             self.device,
             non_blocking=self.device.type == "cuda",
         )
+        self.host_to_device_seconds += time.perf_counter() - started
+        return result
 
-    def encode_inputs(self, states: list[GameState]):
-        array = self.encoding_backend.encode_batch(states)
+    def encode_inputs(self, states: list[GameState], canonical: bool = False):
+        encoder = (
+            self.encoding_backend.encode_canonical_batch
+            if canonical and hasattr(self.encoding_backend, "encode_canonical_batch")
+            else self.encoding_backend.encode_batch
+        )
+        array = encoder(states)
         tensor = torch.from_numpy(array)
         return array, self._move_to_device(tensor)
 
     @torch.inference_mode()
-    def evaluate_batch_arrays(
-        self, states: list[GameState], mask_legal: bool = True
+    def _evaluate_input_arrays(
+        self, states: list[GameState] | None, inputs: torch.Tensor,
+        canonicals: list[GameState] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        if not states:
-            return np.empty((0, 0), dtype=np.float32), np.empty(0, dtype=np.float32)
-        canonicals = [state.canonical() for state in states]
-        _array, inputs = self.encode_inputs(canonicals)
-        self.model.eval()
+        if self.model.training:
+            self.model.eval()
         autocast = (
             torch.autocast(device_type="cuda", dtype=torch.float16)
             if self.mixed_precision
@@ -75,7 +89,7 @@ class NeuralEvaluator:
         self.model_forward_seconds += time.perf_counter() - started
         logits = logits.float()
         values = values.float()
-        if mask_legal:
+        if canonicals is not None:
             mask_array = np.asarray(
                 [legal_action_mask(state) for state in canonicals], dtype=np.bool_
             )
@@ -84,18 +98,62 @@ class NeuralEvaluator:
         else:
             policies = torch.softmax(logits, dim=-1)
         self.forward_calls += 1
-        self.positions_evaluated += len(states)
+        batch_size = int(inputs.shape[0])
+        self.positions_evaluated += batch_size
+        self.batch_sizes.append(batch_size)
         policy_array = policies.cpu().numpy()
-        for index, original in enumerate(states):
-            if original.turn == 1:
-                indices = np.asarray(
-                    policy_rotation_indices(original.size), dtype=np.intp
-                )
-                policy_array[index] = policy_array[index][indices]
+        if states is not None:
+            for index, original in enumerate(states):
+                if original.turn == 1:
+                    indices = np.asarray(
+                        policy_rotation_indices(original.size), dtype=np.intp
+                    )
+                    policy_array[index] = policy_array[index][indices]
         return (
             np.ascontiguousarray(policy_array, dtype=np.float32),
             np.ascontiguousarray(values[:, 0].cpu().numpy(), dtype=np.float32),
         )
+
+    @torch.inference_mode()
+    def evaluate_batch_arrays(
+        self, states: list[GameState], mask_legal: bool = True
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if not states:
+            return np.empty((0, 0), dtype=np.float32), np.empty(0, dtype=np.float32)
+        canonicals = [state.canonical() for state in states] if mask_legal else None
+        _array, inputs = self.encode_inputs(
+            states if canonicals is None else canonicals,
+            canonical=canonicals is None,
+        )
+        return self._evaluate_input_arrays(states, inputs, canonicals)
+
+    @torch.inference_mode()
+    def evaluate_prepared_batch_arrays(
+        self, states: list[GameState]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        if not states:
+            return (
+                np.empty((0, 0), dtype=np.float32),
+                np.empty(0, dtype=np.float32),
+                np.zeros(1, dtype=np.int32),
+                np.empty(0, dtype=np.int32),
+            )
+        encoded, offsets, actions = self.encoding_backend.prepare_batch(states)
+        inputs = self._move_to_device(torch.from_numpy(encoded))
+        policies, values = self._evaluate_input_arrays(states, inputs)
+        return policies, values, offsets, actions
+
+    @torch.inference_mode()
+    def evaluate_encoded_batch_arrays(
+        self, encoded: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if encoded.shape[0] == 0:
+            return (
+                np.empty((0, self.model.action_size), dtype=np.float32),
+                np.empty(0, dtype=np.float32),
+            )
+        inputs = self._move_to_device(torch.from_numpy(encoded))
+        return self._evaluate_input_arrays(None, inputs)
 
     @torch.inference_mode()
     def evaluate_batch(

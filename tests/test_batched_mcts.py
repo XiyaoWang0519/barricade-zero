@@ -83,6 +83,37 @@ class BatchedMCTSTests(unittest.TestCase):
         advanced = search.advance_roots(roots, [action])
         self.assertEqual(advanced[0].state, state.apply_action(action))
 
+    def test_known_legal_advance_reuses_child_without_legality_scan(self):
+        from barricade.batched_mcts import BatchedMCTS
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        class NoIndividualLegalityBackend:
+            def __init__(self):
+                from barricade.backend import NativeRulesBackend
+
+                self.delegate = NativeRulesBackend()
+
+            def legal_actions(self, _state):
+                raise AssertionError("known-legal advancement must not rescan legality")
+
+            def legal_actions_batch(self, states):
+                return self.delegate.legal_actions_batch(states)
+
+        state = GameState.initial(size=5, walls_per_player=2)
+        search = BatchedMCTS(
+            NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1)),
+            simulations=2,
+            rules_backend=NoIndividualLegalityBackend(),
+        )
+        roots = search.create_roots([state])
+        result = search.search_roots(roots)[0]
+        advanced = search.advance_roots_known_legal(roots, [result.best_action])
+        self.assertEqual(
+            advanced[0].state,
+            state.apply_known_legal_action(result.best_action),
+        )
+
     def test_search_accepts_native_rules_backend(self):
         from barricade.backend import NativeRulesBackend
         from barricade.batched_mcts import BatchedMCTS
