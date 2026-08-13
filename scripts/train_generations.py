@@ -8,6 +8,7 @@ from training.generations import GenerationConfig, GenerationTrainer
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--generations", type=int, default=1)
+    parser.add_argument("--board-size", type=int, default=5)
     parser.add_argument("--games", type=int, default=2)
     parser.add_argument("--simulations", type=int, default=8)
     parser.add_argument("--steps", type=int, default=4)
@@ -17,9 +18,12 @@ def main() -> None:
     parser.add_argument("--blocks", type=int, default=2)
     parser.add_argument("--checkpoint-dir", default="checkpoints/generations")
     parser.add_argument("--resume")
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--mixed-precision", action="store_true")
     parser.add_argument("--seed", type=int, default=21)
     args = parser.parse_args()
     config = GenerationConfig(
+        board_size=args.board_size,
         walls_per_player=args.walls,
         channels=args.channels,
         residual_blocks=args.blocks,
@@ -29,8 +33,9 @@ def main() -> None:
         arena_games=args.arena_games,
         batch_size=16,
         seed=args.seed,
+        mixed_precision=args.mixed_precision,
     )
-    trainer = GenerationTrainer(config, args.checkpoint_dir)
+    trainer = GenerationTrainer(config, args.checkpoint_dir, device=args.device)
     if args.resume:
         trainer.resume(args.resume)
     for _ in range(args.generations):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,6 +16,25 @@ from neural.evaluator import NeuralEvaluator
 from neural.model import PolicyValueNetwork
 from .checkpoint import load_checkpoint, save_checkpoint
 from .learner import Learner, ReplayBuffer
+
+
+def model_sha256(model: torch.nn.Module) -> str:
+    digest = hashlib.sha256()
+    for name, tensor in sorted(model.state_dict().items()):
+        value = tensor.detach().cpu().contiguous()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(value.dtype).encode("ascii"))
+        digest.update(str(tuple(value.shape)).encode("ascii"))
+        digest.update(value.view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
+
+
+def file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -33,6 +53,7 @@ class GenerationConfig:
     learning_rate: float = 3e-4
     max_plies: int = 500
     seed: int = 1
+    mixed_precision: bool = False
 
 
 class GenerationTrainer:
@@ -56,7 +77,11 @@ class GenerationTrainer:
         self.generation = int(payload["generation"])
 
     def _self_play(self) -> tuple[int, list[int]]:
-        evaluator = NeuralEvaluator(self.champion, self.device)
+        evaluator = NeuralEvaluator(
+            self.champion,
+            self.device,
+            mixed_precision=self.config.mixed_precision,
+        )
         result = play_concurrent_games(
             evaluator,
             games=self.config.self_play_games,
@@ -79,12 +104,14 @@ class GenerationTrainer:
     def run_generation(self) -> dict:
         added, game_lengths = self._self_play()
         candidate = copy.deepcopy(self.champion)
+        initial_candidate_sha256 = model_sha256(candidate)
         learner = Learner(candidate, learning_rate=self.config.learning_rate, device=self.device)
         metrics = []
         for _ in range(self.config.training_steps):
             metrics.append(
                 learner.train_batch(self.replay.sample(min(self.config.batch_size, len(self.replay))))
             )
+        trained_candidate_sha256 = model_sha256(candidate)
         arena = Arena(
             simulations=self.config.simulations,
             board_size=self.config.board_size,
@@ -93,8 +120,16 @@ class GenerationTrainer:
             rng=random.Random(self.rng.getrandbits(64)),
         )
         result: ArenaResult = arena.play_match(
-            NeuralEvaluator(candidate, self.device),
-            NeuralEvaluator(self.champion, self.device),
+            NeuralEvaluator(
+                candidate,
+                self.device,
+                mixed_precision=self.config.mixed_precision,
+            ),
+            NeuralEvaluator(
+                self.champion,
+                self.device,
+                mixed_precision=self.config.mixed_precision,
+            ),
             self.config.arena_games,
         )
         promoted = result.candidate_score >= self.config.promotion_score
@@ -116,6 +151,8 @@ class GenerationTrainer:
             "draws": result.draws,
             "candidate_score": result.candidate_score,
             "promoted": promoted,
+            "initial_candidate_sha256": initial_candidate_sha256,
+            "trained_candidate_sha256": trained_candidate_sha256,
             **self._last_inference_metrics,
         }
         path = self.checkpoint_dir / f"generation_{self.generation:03d}.pt"
@@ -127,4 +164,5 @@ class GenerationTrainer:
             metadata={"summary": summary, "config": asdict(self.config)},
         )
         summary["checkpoint"] = str(path)
+        summary["checkpoint_sha256"] = file_sha256(path)
         return summary
