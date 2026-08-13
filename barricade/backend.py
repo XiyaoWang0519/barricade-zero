@@ -28,6 +28,16 @@ class PythonRulesBackend:
     def legal_actions(self, state: GameState) -> list[int]:
         return state.legal_actions()
 
+    def legal_actions_batch(self, states: list[GameState]) -> tuple[np.ndarray, np.ndarray]:
+        batches = [self.legal_actions(state) for state in states]
+        offsets = np.zeros(len(states) + 1, dtype=np.int32)
+        if batches:
+            offsets[1:] = np.cumsum([len(actions) for actions in batches], dtype=np.int32)
+        actions = np.asarray(
+            [action for batch in batches for action in batch], dtype=np.int32
+        )
+        return offsets, actions
+
     def has_path_with_extra_wall(
         self, state: GameState, player: int, orientation: str | None = None,
         row: int = 0, col: int = 0,
@@ -67,6 +77,15 @@ class NativeRulesBackend:
             ctypes.POINTER(ctypes.c_int), ctypes.c_int,
         ]
         self.library.bz_legal_actions.restype = ctypes.c_int
+        int_pointer = ctypes.POINTER(ctypes.c_int)
+        uint64_pointer = ctypes.POINTER(ctypes.c_uint64)
+        self.library.bz_legal_actions_batch.argtypes = [
+            ctypes.c_int, ctypes.c_int,
+            int_pointer, int_pointer, uint64_pointer, uint64_pointer,
+            int_pointer, int_pointer, int_pointer, int_pointer,
+            int_pointer, int_pointer, ctypes.c_int,
+        ]
+        self.library.bz_legal_actions_batch.restype = ctypes.c_int
         self.library.bz_encode_state.argtypes = [
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_uint64,
             ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int,
@@ -101,6 +120,41 @@ class NativeRulesBackend:
         if count < 0:
             raise RuntimeError(f"native action buffer requires {-count} entries")
         return list(output[:count])
+
+    def legal_actions_batch(self, states: list[GameState]) -> tuple[np.ndarray, np.ndarray]:
+        if not states:
+            return np.zeros(1, dtype=np.int32), np.empty(0, dtype=np.int32)
+        size = states[0].size
+        if any(state.size != size for state in states):
+            raise ValueError("all states in a legal-action batch must share board size")
+        arguments = [self._arguments(state) for state in states]
+        p0 = np.asarray([item[1] for item in arguments], dtype=np.int32)
+        p1 = np.asarray([item[2] for item in arguments], dtype=np.int32)
+        horizontal = np.asarray([item[3] for item in arguments], dtype=np.uint64)
+        vertical = np.asarray([item[4] for item in arguments], dtype=np.uint64)
+        w0 = np.asarray([state.walls_remaining[0] for state in states], dtype=np.int32)
+        w1 = np.asarray([state.walls_remaining[1] for state in states], dtype=np.int32)
+        turns = np.asarray([state.turn for state in states], dtype=np.int32)
+        winners = np.asarray(
+            [-1 if state.winner is None else state.winner for state in states], dtype=np.int32
+        )
+        offsets = np.empty(len(states) + 1, dtype=np.int32)
+        capacity = len(states) * states[0].action_size
+        actions = np.empty(capacity, dtype=np.int32)
+
+        int_pointer = ctypes.POINTER(ctypes.c_int)
+        uint64_pointer = ctypes.POINTER(ctypes.c_uint64)
+        count = self.library.bz_legal_actions_batch(
+            size, len(states),
+            p0.ctypes.data_as(int_pointer), p1.ctypes.data_as(int_pointer),
+            horizontal.ctypes.data_as(uint64_pointer), vertical.ctypes.data_as(uint64_pointer),
+            w0.ctypes.data_as(int_pointer), w1.ctypes.data_as(int_pointer),
+            turns.ctypes.data_as(int_pointer), winners.ctypes.data_as(int_pointer),
+            offsets.ctypes.data_as(int_pointer), actions.ctypes.data_as(int_pointer), capacity,
+        )
+        if count < 0:
+            raise RuntimeError(f"native batch action buffer requires {-count} entries")
+        return offsets, actions[:count]
 
     def has_path_with_extra_wall(
         self, state: GameState, player: int, orientation: str | None = None,

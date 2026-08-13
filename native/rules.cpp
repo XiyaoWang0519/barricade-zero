@@ -79,6 +79,23 @@ struct Board {
         }
         std::sort(out.begin(), out.end());
     }
+    std::vector<int> legal_actions() const {
+        std::vector<int> actions;
+        if (winner >= 0) return actions;
+        pawn_actions(actions);
+        if (walls[turn] > 0) {
+            int width = n - 1;
+            for (int orientation = 0; orientation < 2; ++orientation)
+                for (int r = 0; r < width; ++r)
+                    for (int c = 0; c < width; ++c) {
+                        if (!geometry(orientation == 0, r, c)) continue;
+                        int extra = orientation + 1;
+                        if (path(0, extra, r, c) && path(1, extra, r, c))
+                            actions.push_back(8 + orientation * width * width + r * width + c);
+                    }
+        }
+        return actions;
+    }
     template <typename T>
     void distance_plane(int player, T* output) const {
         int cells = n * n;
@@ -121,24 +138,30 @@ extern "C" int bz_has_path(int n, int p0, int p1, uint64_t h, uint64_t v,
 extern "C" int bz_legal_actions(int n, int p0, int p1, uint64_t h, uint64_t v,
                                  int w0, int w1, int turn, int winner,
                                  int* output, int capacity) {
-    if (winner >= 0) return 0;
     Board b{n, {p0,p1}, {w0,w1}, turn, winner, h, v};
-    std::vector<int> actions;
-    b.pawn_actions(actions);
-    if (b.walls[turn] > 0) {
-        int width = n - 1;
-        for (int orientation = 0; orientation < 2; ++orientation)
-            for (int r = 0; r < width; ++r)
-                for (int c = 0; c < width; ++c) {
-                    if (!b.geometry(orientation == 0, r, c)) continue;
-                    int extra = orientation + 1;
-                    if (b.path(0, extra, r, c) && b.path(1, extra, r, c))
-                        actions.push_back(8 + orientation * width * width + r * width + c);
-                }
-    }
+    std::vector<int> actions = b.legal_actions();
     if (static_cast<int>(actions.size()) > capacity) return -static_cast<int>(actions.size());
     std::copy(actions.begin(), actions.end(), output);
     return static_cast<int>(actions.size());
+}
+
+extern "C" int bz_legal_actions_batch(
+    int n, int count, const int* p0, const int* p1,
+    const uint64_t* h, const uint64_t* v, const int* w0, const int* w1,
+    const int* turn, const int* winner, int* offsets, int* output, int capacity) {
+    int cursor = 0;
+    offsets[0] = 0;
+    for (int index = 0; index < count; ++index) {
+        Board board{n, {p0[index], p1[index]}, {w0[index], w1[index]},
+                    turn[index], winner[index], h[index], v[index]};
+        std::vector<int> actions = board.legal_actions();
+        if (cursor + static_cast<int>(actions.size()) > capacity)
+            return -(cursor + static_cast<int>(actions.size()));
+        std::copy(actions.begin(), actions.end(), output + cursor);
+        cursor += static_cast<int>(actions.size());
+        offsets[index + 1] = cursor;
+    }
+    return cursor;
 }
 
 extern "C" int bz_encode_state(int n, int p0, int p1, uint64_t h, uint64_t v,

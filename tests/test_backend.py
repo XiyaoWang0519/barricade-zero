@@ -108,6 +108,59 @@ class RulesBackendTests(unittest.TestCase):
         self.assertEqual(encoded.dtype, np.float32)
         self.assertTrue(encoded.flags.c_contiguous)
 
+    def test_native_batch_legal_actions_csr_matches_individual_calls(self):
+        from barricade.backend import NativeRulesBackend
+
+        backend = NativeRulesBackend()
+        state = GameState.initial(size=9, walls_per_player=10)
+        states = [state]
+        for index in range(7):
+            legal = state.legal_actions()
+            state = state.apply_action(legal[index % len(legal)])
+            states.append(state)
+        offsets, actions = backend.legal_actions_batch(states)
+        self.assertEqual(offsets.dtype, np.int32)
+        self.assertEqual(actions.dtype, np.int32)
+        self.assertTrue(offsets.flags.c_contiguous)
+        self.assertTrue(actions.flags.c_contiguous)
+        self.assertEqual(offsets[0], 0)
+        self.assertEqual(offsets[-1], len(actions))
+        for index, state in enumerate(states):
+            self.assertEqual(
+                actions[offsets[index]:offsets[index + 1]].tolist(),
+                backend.legal_actions(state),
+            )
+
+    def test_python_batch_legal_actions_has_same_contract(self):
+        states = [GameState.initial(size=5, walls_per_player=2)] * 3
+        offsets, actions = PythonRulesBackend().legal_actions_batch(states)
+        self.assertEqual(offsets.shape, (4,))
+        self.assertEqual(offsets.dtype, np.int32)
+        self.assertEqual(actions.dtype, np.int32)
+
+    def test_native_batch_legal_actions_matches_python_for_large_reachable_batch(self):
+        from barricade.backend import NativeRulesBackend
+
+        native = NativeRulesBackend()
+        rng = random.Random(337)
+        states = []
+        for _ in range(128):
+            state = GameState.initial(size=9, walls_per_player=10)
+            for _ in range(rng.randrange(30)):
+                legal = state.legal_actions()
+                if not legal or state.is_terminal():
+                    break
+                state = state.apply_action(rng.choice(legal))
+            if not state.is_terminal():
+                states.append(state)
+        offsets, actions = native.legal_actions_batch(states)
+        for index, state in enumerate(states):
+            self.assertEqual(
+                actions[offsets[index]:offsets[index + 1]].tolist(),
+                state.legal_actions(),
+                f"mismatch at batch index {index}: {state}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,8 +41,11 @@ class BatchedMCTS:
         self.rng = rng or random.Random()
         self.rules_backend = rules_backend or load_rules_backend()
 
-    def _expand_from_evaluation(self, node: Node, policy: list[float]) -> None:
-        legal = self.rules_backend.legal_actions(node.state)
+    def _expand_from_evaluation(
+        self, node: Node, policy: list[float], legal=None
+    ) -> None:
+        if legal is None:
+            legal = self.rules_backend.legal_actions(node.state)
         priors = [max(0.0, float(policy[action])) for action in legal]
         total = sum(priors)
         if total <= 0:
@@ -51,6 +54,19 @@ class BatchedMCTS:
             priors = [prior / total for prior in priors]
         node.edges = {action: EdgeStats(prior) for action, prior in zip(legal, priors)}
         node.expanded = True
+
+    def _expand_batch(self, nodes: list[Node], evaluations) -> None:
+        if not nodes:
+            return
+        offsets, actions = self.rules_backend.legal_actions_batch(
+            [node.state for node in nodes]
+        )
+        for index, (node, (policy, _value)) in enumerate(zip(nodes, evaluations)):
+            legal = [
+                int(action)
+                for action in actions[offsets[index]:offsets[index + 1]]
+            ]
+            self._expand_from_evaluation(node, policy, legal)
 
     def _add_noise(self, root: Node) -> None:
         actions = list(root.edges)
@@ -145,8 +161,7 @@ class BatchedMCTS:
         evaluations = self.evaluator.evaluate_batch(
             [root.state for root in pending], mask_legal=False
         )
-        for root, (policy, _value) in zip(pending, evaluations):
-            self._expand_from_evaluation(root, policy)
+        self._expand_batch(pending, evaluations)
 
     def search_roots(
         self,
@@ -170,8 +185,10 @@ class BatchedMCTS:
                 leaf_evaluations = self.evaluator.evaluate_batch(
                     [item.leaf.state for item in nonterminal], mask_legal=False
                 )
-                for item, (policy, value) in zip(nonterminal, leaf_evaluations):
-                    self._expand_from_evaluation(item.leaf, policy)
+                self._expand_batch(
+                    [item.leaf for item in nonterminal], leaf_evaluations
+                )
+                for item, (_policy, value) in zip(nonterminal, leaf_evaluations):
                     self._backup(item.path, value)
             for item in pending:
                 if item.terminal_value is not None:
