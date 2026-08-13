@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from .batched_mcts import BatchedMCTS
 from .mcts import Evaluator, MCTS
 from .state import GameState
 
@@ -44,17 +45,46 @@ class Arena:
     def _play(self, evaluators: tuple[Evaluator, Evaluator]) -> int | None:
         state = GameState.initial(self.board_size, self.walls_per_player)
         repetitions: dict[bytes, int] = {}
+        if not all(hasattr(evaluator, "evaluate_batch") for evaluator in evaluators):
+            searches = tuple(
+                MCTS(
+                    evaluator,
+                    simulations=self.simulations,
+                    rng=random.Random(self.rng.getrandbits(64)),
+                )
+                for evaluator in evaluators
+            )
+            for _ in range(self.max_plies):
+                key = state.canonical_key()
+                repetitions[key] = repetitions.get(key, 0) + 1
+                if repetitions[key] >= 3:
+                    return None
+                result = searches[state.turn].search(state, temperature=0, add_noise=False)
+                state = state.apply_action(result.best_action)
+                if state.is_terminal():
+                    return state.winner
+            return None
+
         searches = tuple(
-            MCTS(evaluator, simulations=self.simulations, rng=random.Random(self.rng.getrandbits(64)))
+            BatchedMCTS(
+                evaluator,
+                simulations=self.simulations,
+                rng=random.Random(self.rng.getrandbits(64)),
+            )
             for evaluator in evaluators
         )
+        roots = tuple(search.create_roots([state])[0] for search in searches)
         for _ in range(self.max_plies):
             key = state.canonical_key()
             repetitions[key] = repetitions.get(key, 0) + 1
             if repetitions[key] >= 3:
                 return None
-            result = searches[state.turn].search(state, temperature=0, add_noise=False)
-            state = state.apply_action(result.best_action)
+            result = searches[state.turn].search_roots(
+                [roots[state.turn]], temperature=0, add_noise=False
+            )[0]
+            action = result.best_action
+            roots = tuple(search.advance_roots([root], [action])[0] for search, root in zip(searches, roots))
+            state = state.apply_action(action)
             if state.is_terminal():
                 return state.winner
         return None

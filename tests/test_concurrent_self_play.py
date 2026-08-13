@@ -49,6 +49,25 @@ class ConcurrentSelfPlayTests(unittest.TestCase):
         self.assertEqual(result.games, 2)
         self.assertTrue(all(example.outcome in (-1.0, 0.0, 1.0) for example in result.examples))
 
+    def test_tree_reuse_retains_search_work(self):
+        from barricade.concurrent_self_play import play_concurrent_games
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        torch.manual_seed(17)
+        model = PolicyValueNetwork(5, channels=8, residual_blocks=1)
+        without = play_concurrent_games(
+            NeuralEvaluator(model), games=4, simulations=8, board_size=5,
+            walls_per_player=0, rng=random.Random(18), use_tree_reuse=False,
+        )
+        with_reuse = play_concurrent_games(
+            NeuralEvaluator(model), games=4, simulations=8, board_size=5,
+            walls_per_player=0, rng=random.Random(18), use_tree_reuse=True,
+        )
+        self.assertGreater(with_reuse.reused_root_visits, 0)
+        self.assertGreater(with_reuse.positions_evaluated, 0)
+        self.assertEqual(with_reuse.games, without.games)
+
 
 if __name__ == "__main__":
     unittest.main()

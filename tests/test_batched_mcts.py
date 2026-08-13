@@ -36,6 +36,37 @@ class BatchedMCTSTests(unittest.TestCase):
         results = BatchedMCTS(evaluator, simulations=24).search_batch(states, temperature=0)
         self.assertTrue(all(result.best_action == UP for result in results))
 
+    def test_persistent_roots_reuse_selected_child_subtrees(self):
+        from barricade.batched_mcts import BatchedMCTS
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        evaluator = NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1))
+        search = BatchedMCTS(evaluator, simulations=8, rng=random.Random(12))
+        roots = search.create_roots([GameState.initial(size=5, walls_per_player=0)])
+        first = search.search_roots(roots, temperature=0)[0]
+        action = first.best_action
+        selected_child = roots[0].children[action]
+        prior_visits = sum(edge.visits for edge in selected_child.edges.values())
+        advanced = search.advance_roots(roots, [action])
+        self.assertIs(advanced[0], selected_child)
+        search.search_roots(advanced, temperature=0)
+        self.assertGreater(sum(edge.visits for edge in advanced[0].edges.values()), prior_visits)
+
+    def test_advance_creates_child_when_action_was_not_visited(self):
+        from barricade.batched_mcts import BatchedMCTS
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        state = GameState.initial(size=5, walls_per_player=0)
+        search = BatchedMCTS(
+            NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1)), simulations=1
+        )
+        roots = search.create_roots([state])
+        action = state.legal_actions()[-1]
+        advanced = search.advance_roots(roots, [action])
+        self.assertEqual(advanced[0].state, state.apply_action(action))
+
 
 if __name__ == "__main__":
     unittest.main()

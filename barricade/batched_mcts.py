@@ -118,21 +118,45 @@ class BatchedMCTS:
             raise ValueError("temperature must be non-negative")
         return SearchResult(policy, visits, priors)
 
-    def search_batch(
+    def create_roots(self, states: list[GameState]) -> list[Node]:
+        if any(state.is_terminal() for state in states):
+            raise ValueError("search roots must be non-terminal")
+        return [Node(state) for state in states]
+
+    def advance_roots(self, roots: list[Node], actions: list[int]) -> list[Node]:
+        if len(roots) != len(actions):
+            raise ValueError("roots and actions must have equal length")
+        advanced = []
+        for root, action in zip(roots, actions):
+            if action not in root.state.legal_actions():
+                raise ValueError(f"illegal root action: {action}")
+            child = root.children.get(action)
+            if child is None:
+                child = Node(root.state.apply_action(action))
+            advanced.append(child)
+        return advanced
+
+    def _ensure_expanded(self, roots: list[Node]) -> None:
+        pending = [root for root in roots if not root.expanded]
+        if not pending:
+            return
+        evaluations = self.evaluator.evaluate_batch([root.state for root in pending])
+        for root, (policy, _value) in zip(pending, evaluations):
+            self._expand_from_evaluation(root, policy)
+
+    def search_roots(
         self,
-        states: list[GameState],
+        roots: list[Node],
         temperature: float = 1.0,
         add_noise: bool = False,
     ) -> list[SearchResult]:
-        if not states:
+        if not roots:
             return []
-        if any(state.is_terminal() for state in states):
+        if any(root.state.is_terminal() for root in roots):
             raise ValueError("search roots must be non-terminal")
-        roots = [Node(state) for state in states]
-        evaluations = self.evaluator.evaluate_batch(states)
-        for root, (policy, _value) in zip(roots, evaluations):
-            self._expand_from_evaluation(root, policy)
-            if add_noise:
+        self._ensure_expanded(roots)
+        if add_noise:
+            for root in roots:
                 self._add_noise(root)
 
         for _ in range(self.simulations):
@@ -147,3 +171,11 @@ class BatchedMCTS:
                 if item.terminal_value is not None:
                     self._backup(item.path, item.terminal_value)
         return [self._result(root, temperature) for root in roots]
+
+    def search_batch(
+        self,
+        states: list[GameState],
+        temperature: float = 1.0,
+        add_noise: bool = False,
+    ) -> list[SearchResult]:
+        return self.search_roots(self.create_roots(states), temperature, add_noise)

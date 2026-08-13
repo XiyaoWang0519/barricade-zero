@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from typing import Any
 
 from .batched_mcts import BatchedMCTS
 from .encoding import rotate_policy
@@ -17,6 +18,7 @@ class _Game:
     trajectory: list[tuple[GameState, list[float], int]] = field(default_factory=list)
     repetitions: dict[bytes, int] = field(default_factory=dict)
     plies: int = 0
+    root: Any = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class ConcurrentSelfPlayResult:
     draws: int
     forward_calls: int
     positions_evaluated: int
+    reused_root_visits: int
 
     @property
     def games(self) -> int:
@@ -65,6 +68,7 @@ def play_concurrent_games(
     max_plies: int = 500,
     repetition_limit: int = 3,
     max_plies_as_draw: bool = True,
+    use_tree_reuse: bool = True,
 ) -> ConcurrentSelfPlayResult:
     if games <= 0:
         raise ValueError("games must be positive")
@@ -74,8 +78,14 @@ def play_concurrent_games(
     lengths: list[int] = []
     wins = [0, 0]
     draws = 0
+    reused_root_visits = 0
     starting_calls = evaluator.forward_calls
     starting_positions = evaluator.positions_evaluated
+    search = BatchedMCTS(
+        evaluator,
+        simulations=simulations,
+        rng=random.Random(rng.getrandbits(64)),
+    )
 
     while active:
         searchable = []
@@ -101,13 +111,13 @@ def play_concurrent_games(
             continue
 
         temperature = 1.0 if min(game.plies for game in searchable) < exploration_plies else 0.0
-        search = BatchedMCTS(
-            evaluator,
-            simulations=simulations,
-            rng=random.Random(rng.getrandbits(64)),
-        )
-        results = search.search_batch(
-            [game.state for game in searchable],
+        roots = []
+        for game in searchable:
+            if not use_tree_reuse or game.root is None:
+                game.root = search.create_roots([game.state])[0]
+            roots.append(game.root)
+        results = search.search_roots(
+            roots,
             temperature=temperature,
             add_noise=temperature > 0,
         )
@@ -118,6 +128,12 @@ def play_concurrent_games(
             )
             game.trajectory.append((game.state.canonical(), canonical_policy, game.state.turn))
             action = _sample(result.policy, rng) if temperature > 0 else result.best_action
+            advanced = search.advance_roots([game.root], [action])[0]
+            if use_tree_reuse:
+                reused_root_visits += sum(edge.visits for edge in advanced.edges.values())
+                game.root = advanced
+            else:
+                game.root = None
             game.state = game.state.apply_action(action)
             game.plies += 1
             if game.state.is_terminal():
@@ -135,4 +151,5 @@ def play_concurrent_games(
         draws,
         evaluator.forward_calls - starting_calls,
         evaluator.positions_evaluated - starting_positions,
+        reused_root_visits,
     )

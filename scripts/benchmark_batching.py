@@ -50,6 +50,7 @@ def main() -> None:
         walls_per_player=0,
         rng=random.Random(args.seed + 200),
         max_plies=200,
+        use_tree_reuse=False,
     )
     batched_seconds = time.perf_counter() - started
     print(

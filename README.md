@@ -23,6 +23,8 @@ Implemented:
 - Atomic generation checkpoints with resume support
 - Wave-batched MCTS across concurrent self-play games
 - Inference batching metrics and sequential-vs-batched benchmark
+- Persistent MCTS subtree reuse between moves
+- Tree-reuse benchmark and retained-root visit metrics
 
 Create the training environment:
 
@@ -70,4 +72,10 @@ Benchmark sequential versus batched inference:
 PYTHONPATH=. python scripts/benchmark_batching.py --games 8 --simulations 16
 ```
 
-The next milestone is persistent MCTS tree reuse, larger concurrent game pools, and stronger checkpoint tournaments. The reference search is intentionally readable Python; production 9x9 self-play will later need a compiled search path.
+Benchmark persistent-tree reuse:
+
+```bash
+PYTHONPATH=. python scripts/benchmark_tree_reuse.py --games 32 --simulations 64
+```
+
+The next milestone is stronger checkpoint tournaments and profiling the Python rules/search hot paths before a compiled implementation. With 64 concurrent 5x5 games, the current CPU pipeline reaches an average inference batch near 32; production 9x9 training should target 64–256.

@@ -72,6 +72,7 @@ class GenerationTrainer:
             "positions_evaluated": result.positions_evaluated,
             "average_inference_batch_size": result.average_inference_batch_size,
             "self_play_draws": result.draws,
+            "reused_root_visits": result.reused_root_visits,
         }
         return len(result.examples), result.game_lengths
 
