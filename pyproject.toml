@@ -8,5 +8,8 @@ dependencies = [
     "torch>=2.6",
 ]
 
+[tool.setuptools.packages.find]
+include = ["barricade*", "neural*", "training*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

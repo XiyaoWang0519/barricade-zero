@@ -27,7 +27,8 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | contiguous evaluator outputs, 128 games | 14.26 | 2420.19 |
 | single-FFI native batch encoding, 128 games | 14.40 | 2397.46 |
 | vectorized legal-prior normalization, 128 games | 13.40 | 2575.57 |
-| candidate 64x6 network, 128 games | 30.24 | 1320.76 |
+| candidate 64x6 network, original CPU baseline | 30.24 | 1320.76 |
+| candidate 64x6 network, post-CUDA-path CPU control | 16.99 | 2350.46 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -98,6 +99,14 @@ batch and takes 30.24 seconds. Model forward alone takes 17.36 seconds (about
 hotspots are smaller. This is the first configuration that satisfies the full
 GPU-readiness gate.
 
+After adding the explicit CUDA boundary, the exact 64x6 control workload was
+rerun on the development Mac in a recreated Python 3.14.4 / PyTorch 2.13.0
+environment. It completed in 16.99 seconds at 2,350.46 evaluated positions/s,
+with 39,934 positions, 441 forward calls, an average batch of 90.55, and 13.55
+seconds of measured model-forward time. This confirms no CPU regression, but
+it is not an apples-to-apples optimization claim against the original 30.24
+second run because the Python/PyTorch environment was recreated.
+
 ## Native extension boundary
 
 The first compiled extension implements the narrow interface in
@@ -123,3 +132,33 @@ Rules, encoding, checkpoint/resume, arena, and real optimizer/checkpoint learnin
 loops have all passed their verification gates. Further throughput work should
 therefore move model inference/training to a CUDA GPU rather than continue CPU
 micro-optimization of the 16x2 smoke profile.
+
+## CUDA evaluator and benchmark contract, 2026-08-13
+
+The evaluator now has an explicit CUDA mixed-precision path. It transfers one
+contiguous encoded batch and one contiguous legal-mask batch to the device,
+runs model inference under CUDA float16 autocast when requested, and converts
+logits and values back to float32 before policy normalization and host output.
+CUDA events are synchronized around model-forward timing so reported forward
+seconds do not measure only asynchronous kernel dispatch.
+
+The profile harness accepts `--device cuda` and `--mixed-precision`. It records
+the GPU name and total VRAM, full wall time, positions and forward calls,
+average inference batch, synchronized model-forward time, peak allocated and
+reserved VRAM, and sampled average/maximum utilization. `--json-output`
+persists the summary for comparison with the CPU baseline.
+
+```bash
+PYTHONPATH=. python scripts/profile_self_play.py \
+  --board-size 9 --walls 10 --games 128 --simulations 8 \
+  --channels 64 --blocks 6 --device cuda --mixed-precision \
+  --profile profiles/9x9-64x6-cuda.prof \
+  --json-output profiles/9x9-64x6-cuda.json --top 18
+```
+
+CUDA-only tests cover CPU/CUDA numerical agreement, legal masks on both turns,
+player-two policy rotation, input device/dtype, mixed-precision autocast with
+float32 outputs, fixed whole-batch transfer counts, and CPU/CUDA checkpoint
+loading. They skip cleanly on non-CUDA hosts. The implementation and CPU
+fallback are verified locally, but the CUDA tests and 64x6 benchmark have not
+yet run on real NVIDIA hardware; do not treat this as a measured GPU result.

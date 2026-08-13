@@ -130,6 +130,78 @@ class NeuralEvaluatorTests(unittest.TestCase):
             np.testing.assert_allclose(policies[index], policy, rtol=1e-6, atol=1e-7)
             self.assertAlmostEqual(float(values[index]), value, places=6)
 
+    def test_cpu_evaluator_records_forward_time_and_fp32_outputs(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        evaluator = NeuralEvaluator(
+            PolicyValueNetwork(5, channels=8, residual_blocks=1),
+            mixed_precision=True,
+        )
+        policies, values = evaluator.evaluate_batch_arrays(
+            [GameState.initial(size=5, walls_per_player=0)]
+        )
+        self.assertFalse(evaluator.mixed_precision)
+        self.assertEqual(policies.dtype, np.float32)
+        self.assertEqual(values.dtype, np.float32)
+        self.assertGreaterEqual(evaluator.model_forward_seconds, 0.0)
+
+
+@unittest.skipUnless(
+    torch is not None and torch.cuda.is_available(), "CUDA is not available"
+)
+class NeuralEvaluatorCudaTests(unittest.TestCase):
+    def test_cpu_and_cuda_agree_on_masks_rotation_policy_and_value(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        torch.manual_seed(401)
+        cpu_model = PolicyValueNetwork(5, channels=8, residual_blocks=1)
+        cuda_model = PolicyValueNetwork(5, channels=8, residual_blocks=1)
+        cuda_model.load_state_dict(cpu_model.state_dict())
+        first = GameState.initial(size=5, walls_per_player=2)
+        states = [first, first.apply_action(first.legal_pawn_actions()[0])]
+        cpu_policies, cpu_values = NeuralEvaluator(
+            cpu_model, device="cpu"
+        ).evaluate_batch_arrays(states)
+        cuda_policies, cuda_values = NeuralEvaluator(
+            cuda_model, device="cuda", mixed_precision=False
+        ).evaluate_batch_arrays(states)
+        np.testing.assert_allclose(cuda_policies, cpu_policies, rtol=1e-4, atol=1e-5)
+        np.testing.assert_allclose(cuda_values, cpu_values, rtol=1e-4, atol=1e-5)
+        for index, state in enumerate(states):
+            legal = set(state.legal_actions())
+            self.assertTrue(
+                all(
+                    cuda_policies[index, action] == 0
+                    for action in range(state.action_size)
+                    if action not in legal
+                )
+            )
+
+    def test_cuda_mixed_precision_uses_one_batch_transfer_and_fp32_outputs(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        class RecordingModel(PolicyValueNetwork):
+            def forward(self, inputs):
+                self.input_device = inputs.device
+                self.input_dtype = inputs.dtype
+                self.cuda_autocast_enabled = torch.is_autocast_enabled("cuda")
+                return super().forward(inputs)
+
+        model = RecordingModel(5, channels=8, residual_blocks=1)
+        evaluator = NeuralEvaluator(model, device="cuda", mixed_precision=True)
+        states = [GameState.initial(size=5, walls_per_player=2)] * 3
+        policies, values = evaluator.evaluate_batch_arrays(states)
+        self.assertEqual(model.input_device.type, "cuda")
+        self.assertEqual(model.input_dtype, torch.float32)
+        self.assertTrue(model.cuda_autocast_enabled)
+        self.assertEqual(evaluator.host_to_device_transfers, 2)
+        self.assertEqual(policies.dtype, np.float32)
+        self.assertEqual(values.dtype, np.float32)
+        np.testing.assert_allclose(policies.sum(axis=1), 1.0, rtol=1e-5, atol=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

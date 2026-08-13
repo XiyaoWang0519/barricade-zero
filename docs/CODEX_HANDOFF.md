@@ -10,11 +10,13 @@ changing code.
 - Handoff baseline commit before this document: `f2bf187`
 - Python: 3.11+
 - Tests: standard-library `unittest`; do not assume `pytest` is installed
-- Latest verified suite: **70 tests passed**
+- Latest verified suite: **74 tests run: 71 passed, 3 CUDA-only skipped**
 - Latest random stress: **1,000 games passed**, wins `[499, 501]`, 51,575 plies
 - Python reference rules remain the correctness oracle and fallback
 - Native C++ backend supports board sizes through 9x9 because its wall/edge
   representation uses 64-bit bitsets
+- CUDA evaluator/benchmark support is implemented, but its hardware-only tests
+  have not yet run on an NVIDIA GPU
 - No RunPod Pod remains. The attempted GPU deployment was fully deleted, so
   there is no ongoing GPU or storage charge.
 
@@ -148,7 +150,7 @@ PYTHONPATH=. python scripts/profile_self_play.py \
   --profile profiles/9x9-64x6-128.prof --top 18
 ```
 
-Latest CPU result:
+Original CPU baseline:
 
 - 30.24 seconds
 - 39,934 evaluated positions
@@ -156,6 +158,18 @@ Latest CPU result:
 - average inference batch 90.55
 - model forward 17.36 seconds, about 57% of wall time
 - expansion about 4.04 seconds
+
+Post-CUDA-path CPU control in a recreated Python 3.14.4 / PyTorch 2.13.0
+environment:
+
+- 16.99 seconds
+- 39,934 evaluated positions
+- 2,350.46 positions/s
+- average inference batch 90.55
+- synchronized model forward 13.55 seconds
+
+This verifies no local CPU regression but is not an apples-to-apples speedup
+claim against the original environment.
 
 This is why CUDA is now the correct next step. The earlier 16x2 profile is for
 finding rules/search overhead and must not be used to decide production GPU
@@ -214,22 +228,30 @@ If revisiting RunPod:
 
 ## Recommended next work, in order
 
-### 1. Add a real CUDA evaluator path using TDD
+### 1. Validate the CUDA evaluator path on a real NVIDIA GPU
 
-The current evaluator accepts a device, but the entire path needs explicit
-CUDA contracts and tests. Add tests first for:
+The evaluator and tests now cover:
 
 - CPU and CUDA policy/value numerical agreement within a documented tolerance
 - legal-mask equivalence on both turns
 - player-two policy rotation equivalence
 - batch input device and dtype
 - mixed precision on CUDA with FP32 output normalization
-- no accidental per-position host/device transfers
+- fixed whole-batch host/device transfer counts
 - checkpoint load across CPU and CUDA devices
 
-Keep CPU behavior unchanged and skip CUDA tests cleanly when CUDA is absent.
+Run the hardware-dependent tests first:
 
-### 2. Add a CUDA benchmark harness
+```bash
+python -m unittest \
+  tests.test_evaluator.NeuralEvaluatorCudaTests \
+  tests.test_checkpoint.CudaCheckpointTests -v
+```
+
+They currently skip cleanly on the non-CUDA development Mac. A green run on a
+real NVIDIA GPU is still required before calling the CUDA path validated.
+
+### 2. Run the CUDA benchmark harness
 
 Record at minimum:
 
@@ -243,7 +265,9 @@ Record at minimum:
 - GPU utilization sampled during the run
 
 Compare full 64x6 128-game workload with CPU baseline. Do not report only
-isolated forward speed.
+isolated forward speed. The harness now accepts `--device cuda`,
+`--mixed-precision`, and `--json-output`; see `docs/performance.md` for the
+exact command and metric contract.
 
 ### 3. Run a complete CUDA learning cycle
 
@@ -318,10 +342,9 @@ python -m unittest tests.test_backend -v
 
 ```text
 Read docs/CODEX_HANDOFF.md, README.md, and docs/performance.md. Continue
-Barricade Zero from the current clean branch. Use strict TDD. Implement and
-verify a CUDA-aware NeuralEvaluator path while preserving CPU behavior, Python
-fallback, canonical policy rotation, and legal masks. Add CUDA tests that skip
-cleanly when CUDA is unavailable, add synchronized full-workload GPU metrics,
-run focused and full CPU tests, and commit one isolated change. Do not rent or
-purchase compute.
+Barricade Zero from the current branch. Run the CUDA-only evaluator/checkpoint
+tests on a real NVIDIA GPU, then run the synchronized 9x9 64x6 128-game CUDA
+benchmark and persist its JSON metrics. Compare complete-generation throughput
+and cost against the CPU baseline before changing architecture. Do not rent or
+purchase compute without explicit approval.
 ```

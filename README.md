@@ -66,6 +66,19 @@ PYTHONPATH=. python scripts/train_generations.py \
   --generations 1 --games 2 --simulations 8 --steps 4 --arena-games 2
 ```
 
+Run the synchronized full-workload CUDA benchmark (on an NVIDIA CUDA host):
+
+```bash
+PYTHONPATH=. python scripts/profile_self_play.py \
+  --board-size 9 --walls 10 --games 128 --simulations 8 \
+  --channels 64 --blocks 6 --device cuda --mixed-precision \
+  --profile profiles/9x9-64x6-cuda.prof \
+  --json-output profiles/9x9-64x6-cuda.json --top 18
+```
+
+The JSON report includes synchronized model-forward time, complete workload
+throughput, peak allocated/reserved VRAM, and sampled GPU utilization.
+
 Resume from a checkpoint:
 
 ```bash
