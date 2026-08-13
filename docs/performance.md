@@ -29,6 +29,7 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | vectorized legal-prior normalization, 128 games | 13.40 | 2575.57 |
 | candidate 64x6 network, original CPU baseline | 30.24 | 1320.76 |
 | candidate 64x6 network, post-CUDA-path CPU control | 16.99 | 2350.46 |
+| candidate 64x6 network, RTX 3090 CUDA FP16 | 13.07 | 3030.12 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -159,6 +160,45 @@ PYTHONPATH=. python scripts/profile_self_play.py \
 CUDA-only tests cover CPU/CUDA numerical agreement, legal masks on both turns,
 player-two policy rotation, input device/dtype, mixed-precision autocast with
 float32 outputs, fixed whole-batch transfer counts, and CPU/CUDA checkpoint
-loading. They skip cleanly on non-CUDA hosts. The implementation and CPU
-fallback are verified locally, but the CUDA tests and 64x6 benchmark have not
-yet run on real NVIDIA hardware; do not treat this as a measured GPU result.
+loading. They skip cleanly on non-CUDA hosts.
+
+### Measured RTX 3090 result
+
+The complete workload ran on a RunPod Secure Cloud RTX 3090 with 24 GB VRAM,
+driver 580.159.03, PyTorch 2.4.1+cu124, and CUDA 12.4. All three CUDA-only
+evaluator/checkpoint tests passed before benchmarking.
+
+The mixed-precision 64x6 benchmark produced:
+
+- 13.07 seconds full wall time
+- 39,593 evaluated positions and 489 forward calls
+- 3,030.12 positions/s with average batch 80.97
+- 2.57 seconds synchronized model-forward time
+- 24.4 MB peak allocated and 50 MB peak reserved VRAM
+- 3.61% average and 8% peak sampled GPU utilization
+
+Model forward is about 5.3x faster than the 13.55-second current CPU control,
+but complete workload throughput improves only about 1.3x over that control
+(and about 2.3x over the original CPU baseline). Mixed precision changes small
+policy values enough to produce a slightly different deterministic trajectory,
+so compare the configured workload and throughput rather than expecting an
+identical position count. Low utilization and the profile show that native
+legality, expansion, and Python tree descent now dominate; a larger GPU alone
+would be poor value for this workload.
+
+### CUDA learning-cycle evidence
+
+A short real 9x9 cycle used 10 walls, a 64x6 model, four concurrent self-play
+games, eight simulations, four optimizer steps, and a four-game balanced arena.
+It completed self-play, CUDA training, atomic checkpointing, arena rejection,
+and resume into generation 2. Generation 1 changed the candidate model hash
+from `c855a557...` to `ad71e35e...`, with loss `4.9167 -> 4.8914`; the arena
+score was 0.25, so the candidate correctly did not promote. Generation 2
+restored generation number and champion hash, reproduced the deterministic
+training result, and wrote a distinct checkpoint.
+
+Artifacts are stored locally under `runs/runpod-20260813-rtx3090/`, including
+the JSON benchmark, cProfile data, generation logs, and both checkpoints. The
+RunPod account was verified at zero Pods afterward; the temporary lifecycle API
+key and watchdog credential were removed. Observed account balance changed by
+about $0.18 for the complete session.

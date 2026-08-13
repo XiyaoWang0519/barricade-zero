@@ -10,14 +10,16 @@ changing code.
 - Handoff baseline commit before this document: `f2bf187`
 - Python: 3.11+
 - Tests: standard-library `unittest`; do not assume `pytest` is installed
-- Latest verified suite: **74 tests run: 71 passed, 3 CUDA-only skipped**
+- Latest committed training suite: **76 tests: 73 passed, 3 CUDA-only skipped
+  locally**; all 5 focused evaluator, checkpoint, and generation tests passed
+  on an RTX 3090
 - Latest random stress: **1,000 games passed**, wins `[499, 501]`, 51,575 plies
 - Python reference rules remain the correctness oracle and fallback
 - Native C++ backend supports board sizes through 9x9 because its wall/edge
   representation uses 64-bit bitsets
-- CUDA evaluator/benchmark support is implemented, but its hardware-only tests
-  have not yet run on an NVIDIA GPU
-- No RunPod Pod remains. The attempted GPU deployment was fully deleted, so
+- CUDA evaluation, mixed-precision benchmarking, optimizer steps, checkpoint,
+  resume, balanced arena, and promotion rejection are validated on an RTX 3090
+- No RunPod Pod remains. The successful GPU test Pod was terminated, so
   there is no ongoing GPU or storage charge.
 
 ## Objective
@@ -197,7 +199,25 @@ See `docs/performance.md` for the complete progression.
 
 ## RunPod attempt and lessons
 
-The GPU code path has **not** yet been validated on CUDA.
+The GPU code path is validated on CUDA. A successful 2026-08-13 run used a
+Secure Cloud RTX 3090 at $0.50/hour with:
+
+```text
+runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+```
+
+Full public-IP SSH worked with the registered local `runpod_autorae` key. The
+64x6 benchmark completed in 13.07 seconds at 3,030.12 positions/s; model
+forward took 2.57 seconds, GPU utilization averaged only 3.61%, and peak
+allocated VRAM was about 24.4 MB. A two-generation 9x9 CUDA cycle also passed
+self-play, optimizer, checkpoint, resume, arena, and no-promotion paths. Local
+artifacts are under `runs/runpod-20260813-rtx3090/`.
+
+The Pod was terminated, the account was verified at zero Pods, and the
+temporary restricted lifecycle key was revoked. The balance changed from
+$19.40 to $19.22 during the complete session.
+
+Historical failed attempt:
 
 The attempted RunPod setup used an RTX 3090 at $0.22/hour. The first image was:
 
@@ -214,12 +234,12 @@ runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 That resolved the CUDA compatibility issue, but RunPod basic SSH continued to
 reject the temporary key despite `runpodctl ssh list-keys` showing the matching
-fingerprint. Do not spend more time on this deployment unless the user requests
-it. All Barricade Pods were deleted and the budget timer was cancelled.
+fingerprint. The successful run avoided basic SSH by using a Secure Cloud Pod
+with public-IP SSH.
 
 If revisiting RunPod:
 
-1. Confirm account SSH access with `runpodctl ssh info <pod-id>` before waiting.
+1. Use the registered local `runpod_autorae` key explicitly for SSH.
 2. Select an image whose CUDA requirement is no newer than the host driver.
 3. Prefer a public-IP Pod with full SSH if SCP/rsync is required.
 4. Install a hard budget watchdog before transferring code.
@@ -228,62 +248,21 @@ If revisiting RunPod:
 
 ## Recommended next work, in order
 
-### 1. Validate the CUDA evaluator path on a real NVIDIA GPU
+### 1. Confirm exact Barricade rules
 
-The evaluator and tests now cover:
+Before expensive 9x9 training, obtain and encode the exact target rules. Check:
 
-- CPU and CUDA policy/value numerical agreement within a documented tolerance
-- legal-mask equivalence on both turns
-- player-two policy rotation equivalence
-- batch input device and dtype
-- mixed precision on CUDA with FP32 output normalization
-- fixed whole-batch host/device transfer counts
-- checkpoint load across CPU and CUDA devices
+- board size and wall inventory
+- jump and diagonal rules
+- wall anchor convention
+- repetition/draw handling
+- whether the target differs from standard Quoridor
 
-Run the hardware-dependent tests first:
+Update tests before changing engine behavior. The short CUDA cycle produced all
+self-play draws, reinforcing that long paid training should wait for rule and
+evaluation confirmation.
 
-```bash
-python -m unittest \
-  tests.test_evaluator.NeuralEvaluatorCudaTests \
-  tests.test_checkpoint.CudaCheckpointTests -v
-```
-
-They currently skip cleanly on the non-CUDA development Mac. A green run on a
-real NVIDIA GPU is still required before calling the CUDA path validated.
-
-### 2. Run the CUDA benchmark harness
-
-Record at minimum:
-
-- GPU model and VRAM
-- network channels/blocks
-- games and simulations
-- positions, forward calls, average batch
-- full wall time and positions/s
-- model-forward time with `torch.cuda.synchronize()` around timed regions
-- peak allocated/reserved VRAM
-- GPU utilization sampled during the run
-
-Compare full 64x6 128-game workload with CPU baseline. Do not report only
-isolated forward speed. The harness now accepts `--device cuda`,
-`--mixed-precision`, and `--json-output`; see `docs/performance.md` for the
-exact command and metric contract.
-
-### 3. Run a complete CUDA learning cycle
-
-Use a short but real 9x9 cycle:
-
-- self-play
-- optimizer steps
-- atomic checkpoint
-- resume
-- balanced arena
-- promotion/no-promotion decision
-
-Persist machine-readable JSON metrics. Verify model parameters and checkpoint
-hashes actually change after optimizer steps.
-
-### 4. Improve evaluation quality
+### 2. Improve evaluation quality
 
 The current tiny arena is only a plumbing smoke test. Add:
 
@@ -294,17 +273,17 @@ The current tiny arena is only a plumbing smoke test. Add:
 
 Loss decrease alone is not evidence of stronger play.
 
-### 5. Confirm exact Barricade rules
+### 3. Scale training where profiles justify it
 
-Before expensive 9x9 training, obtain and encode the exact target rules. Check:
+The RTX 3090 averaged only 3.61% utilization. Before renting a larger GPU:
 
-- board size and wall inventory
-- jump and diagonal rules
-- wall anchor convention
-- repetition/draw handling
-- whether the target differs from standard Quoridor
+- increase concurrent self-play games and measure batch/utilization response
+- profile native legality, expansion, and Python tree descent on the GPU host
+- persist generation duration, training duration, and arena duration separately
+- compare cost per generated example and cost per promoted checkpoint
 
-Update tests before changing engine behavior.
+Do not interpret low VRAM use as a reason to enlarge the network until stronger
+evaluation and exact-rule gates are satisfied.
 
 ## Development discipline
 
@@ -342,9 +321,9 @@ python -m unittest tests.test_backend -v
 
 ```text
 Read docs/CODEX_HANDOFF.md, README.md, and docs/performance.md. Continue
-Barricade Zero from the current branch. Run the CUDA-only evaluator/checkpoint
-tests on a real NVIDIA GPU, then run the synchronized 9x9 64x6 128-game CUDA
-benchmark and persist its JSON metrics. Compare complete-generation throughput
-and cost against the CPU baseline before changing architecture. Do not rent or
-purchase compute without explicit approval.
+Barricade Zero from the current branch. Preserve the verified CUDA path and
+local RunPod artifacts. Confirm the exact target-game rules and add fixed
+evaluation baselines before long paid training. Then scale concurrent self-play
+while measuring complete-generation throughput and cost, not isolated model
+forward speed. Do not rent or purchase compute without explicit approval.
 ```
