@@ -142,22 +142,23 @@ class RulesBackendTests(unittest.TestCase):
         from barricade.backend import NativeRulesBackend
 
         native = NativeRulesBackend()
+        python = PythonRulesBackend()
         rng = random.Random(337)
         states = []
         for _ in range(128):
             state = GameState.initial(size=9, walls_per_player=10)
-            for _ in range(rng.randrange(30)):
-                legal = state.legal_actions()
+            for _ in range(rng.randrange(60)):
+                legal = python.legal_actions(state)
                 if not legal or state.is_terminal():
                     break
-                state = state.apply_action(rng.choice(legal))
+                state = state.apply_known_legal_action(rng.choice(legal))
             if not state.is_terminal():
                 states.append(state)
         offsets, actions = native.legal_actions_batch(states)
         for index, state in enumerate(states):
             self.assertEqual(
                 actions[offsets[index]:offsets[index + 1]].tolist(),
-                state.legal_actions(),
+                python.legal_actions(state),
                 f"mismatch at batch index {index}: {state}",
             )
 

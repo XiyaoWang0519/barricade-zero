@@ -26,13 +26,15 @@ struct Board {
         if (extra == 1) hm |= uint64_t{1} << (er * (n - 1) + ec);
         if (extra == 2) vm |= uint64_t{1} << (er * (n - 1) + ec);
         int goal = player == 0 ? 0 : n - 1;
-        std::deque<int> q{p[player]};
-        std::vector<uint8_t> seen(n * n);
+        int queue[81];
+        uint8_t seen[81] = {};
+        int front = 0, back = 0;
+        queue[back++] = p[player];
         seen[p[player]] = 1;
         constexpr int dr[4] = {-1, 1, 0, 0};
         constexpr int dc[4] = {0, 0, -1, 1};
-        while (!q.empty()) {
-            int cell = q.front(); q.pop_front();
+        while (front < back) {
+            int cell = queue[front++];
             int r = cell / n, c = cell % n;
             if (r == goal) return true;
             for (int i = 0; i < 4; ++i) {
@@ -40,7 +42,8 @@ struct Board {
                 if (nr < 0 || nc < 0 || nr >= n || nc >= n) continue;
                 int next = nr * n + nc;
                 if (!seen[next] && !blocked(cell, next, hm, vm)) {
-                    seen[next] = 1; q.push_back(next);
+                    seen[next] = 1;
+                    queue[back++] = next;
                 }
             }
         }

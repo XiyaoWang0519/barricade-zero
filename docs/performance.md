@@ -21,6 +21,7 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | contiguous float32 batch encoding, 128 games | 30.78 | 1121.20 |
 | native CSR legal-action batches, 128 games | 28.77 | 1199.67 |
 | cached policy rotation permutation, 128 games | 25.14 | 1373.08 |
+| fixed-capacity native path-search storage, 128 games | 22.80 | 1514.08 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -43,6 +44,15 @@ Caching the involutive action permutation removes repeated per-policy action
 decoding and lowers the same workload from 28.77 to 25.14 seconds. Policy
 rotation no longer appears among the leading cumulative-time functions.
 
+Replacing per-candidate heap-backed BFS containers in the native path check
+with fixed-capacity stack storage (the backend's supported maximum is 9x9)
+lowers the fixed 128-game workload from 25.14 to 22.80 seconds, a 9.3% wall-time
+reduction, and raises throughput from 1,373 to 1,514 positions/s. An expanded
+128-state differential test now samples up to 59 reachable plies and compares
+the batch result against the Python backend. Native batch legality still leads
+CPU cost at 4.73 seconds; Python expansion/tree selection account for roughly
+4.76/4.54 seconds, while model forward is 2.14 seconds.
+
 ## Native extension boundary
 
 The first compiled extension implements the narrow interface in
@@ -63,8 +73,8 @@ is absent. Build it with `python scripts/build_native.py`.
 Do not rent a GPU while rules/search dominate. Re-profile after native rules.
 The batch-size half of the GPU gate is satisfied: 128 concurrent games produce
 an average batch of 86.1. However, model forward is only about 4.14 of 30.78
-seconds in the pre-CSR workload and about 2.47 of 28.77 seconds after CSR
-batching. After cached rotation, model forward remains about 2.48 of 25.14
-seconds (roughly 10%). GPU rental should wait until
+seconds in the pre-CSR workload, 2.47 of 28.77 seconds after CSR batching, and
+2.14 of 22.80 seconds after the latest native/path and policy optimizations
+(roughly 9%). GPU rental should wait until
 batched/native legal-action generation and tree-search work make model forward
 the sustained dominant cost.
