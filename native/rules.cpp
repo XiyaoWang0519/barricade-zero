@@ -55,6 +55,51 @@ struct Board {
             return !anchor(h, r, c - 1) && !anchor(h, r, c + 1);
         return !anchor(v, r - 1, c) && !anchor(v, r + 1, c);
     }
+    void build_open_edges(uint8_t* open) const {
+        constexpr int dr[4] = {-1, 1, 0, 0};
+        constexpr int dc[4] = {0, 0, -1, 1};
+        int cells = n * n;
+        std::fill(open, open + cells, uint8_t{0});
+        for (int cell = 0; cell < cells; ++cell) {
+            int row = cell / n, col = cell % n;
+            for (int direction = 0; direction < 4; ++direction) {
+                int nr = row + dr[direction], nc = col + dc[direction];
+                if (nr < 0 || nc < 0 || nr >= n || nc >= n) continue;
+                if (!blocked(cell, nr * n + nc, h, v))
+                    open[cell] |= uint8_t{1} << direction;
+            }
+        }
+    }
+    void clear_edge(uint8_t* open, int first, int second) const {
+        int delta = second - first;
+        int forward = delta == -n ? 0 : delta == n ? 1 : delta == -1 ? 2 : 3;
+        int reverse = forward ^ 1;
+        open[first] &= ~(uint8_t{1} << forward);
+        open[second] &= ~(uint8_t{1} << reverse);
+    }
+    bool path_on_open_edges(int player, const uint8_t* open) const {
+        int goal = player == 0 ? 0 : n - 1;
+        int queue[81];
+        uint8_t seen[81] = {};
+        int front = 0, back = 0;
+        queue[back++] = p[player];
+        seen[p[player]] = 1;
+        constexpr int delta[4] = {-9, 9, -1, 1};
+        while (front < back) {
+            int cell = queue[front++];
+            if (cell / n == goal) return true;
+            for (int direction = 0; direction < 4; ++direction) {
+                if (!(open[cell] & (uint8_t{1} << direction))) continue;
+                int step = direction == 0 ? -n : direction == 1 ? n : delta[direction];
+                int next = cell + step;
+                if (!seen[next]) {
+                    seen[next] = 1;
+                    queue[back++] = next;
+                }
+            }
+        }
+        return false;
+    }
     void pawn_actions(std::vector<int>& out) const {
         constexpr int dr[4] = {-1, 1, 0, 0};
         constexpr int dc[4] = {0, 0, -1, 1};
@@ -88,12 +133,24 @@ struct Board {
         pawn_actions(actions);
         if (walls[turn] > 0) {
             int width = n - 1;
+            int cells = n * n;
+            uint8_t base_open[81];
+            uint8_t candidate_open[81];
+            build_open_edges(base_open);
             for (int orientation = 0; orientation < 2; ++orientation)
                 for (int r = 0; r < width; ++r)
                     for (int c = 0; c < width; ++c) {
                         if (!geometry(orientation == 0, r, c)) continue;
-                        int extra = orientation + 1;
-                        if (path(0, extra, r, c) && path(1, extra, r, c))
+                        std::copy(base_open, base_open + cells, candidate_open);
+                        if (orientation == 0) {
+                            clear_edge(candidate_open, r * n + c, (r + 1) * n + c);
+                            clear_edge(candidate_open, r * n + c + 1, (r + 1) * n + c + 1);
+                        } else {
+                            clear_edge(candidate_open, r * n + c, r * n + c + 1);
+                            clear_edge(candidate_open, (r + 1) * n + c, (r + 1) * n + c + 1);
+                        }
+                        if (path_on_open_edges(0, candidate_open)
+                            && path_on_open_edges(1, candidate_open))
                             actions.push_back(8 + orientation * width * width + r * width + c);
                     }
         }

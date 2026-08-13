@@ -22,6 +22,7 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | native CSR legal-action batches, 128 games | 28.77 | 1199.67 |
 | cached policy rotation permutation, 128 games | 25.14 | 1373.08 |
 | fixed-capacity native path-search storage, 128 games | 22.80 | 1514.08 |
+| precomputed native open-edge graph, 128 games | 19.70 | 1751.79 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -53,6 +54,12 @@ the batch result against the Python backend. Native batch legality still leads
 CPU cost at 4.73 seconds; Python expansion/tree selection account for roughly
 4.76/4.54 seconds, while model forward is 2.14 seconds.
 
+Precomputing each state's open-edge adjacency once, then copying the 81-byte
+table and removing the candidate wall's two edges, lowers the same workload
+from 22.80 to 19.70 seconds. Native batch legality falls from 4.73 to 2.14
+seconds. Python tree descent/selection (about 5.93/4.52 seconds) is now the
+largest sustained bottleneck; model forward is about 2.19 seconds.
+
 ## Native extension boundary
 
 The first compiled extension implements the narrow interface in
@@ -74,7 +81,7 @@ Do not rent a GPU while rules/search dominate. Re-profile after native rules.
 The batch-size half of the GPU gate is satisfied: 128 concurrent games produce
 an average batch of 86.1. However, model forward is only about 4.14 of 30.78
 seconds in the pre-CSR workload, 2.47 of 28.77 seconds after CSR batching, and
-2.14 of 22.80 seconds after the latest native/path and policy optimizations
-(roughly 9%). GPU rental should wait until
+2.19 of 19.70 seconds after open-edge precomputation (roughly 11%). GPU rental
+should wait until
 batched/native legal-action generation and tree-search work make model forward
 the sustained dominant cost.
