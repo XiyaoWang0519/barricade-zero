@@ -25,6 +25,7 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | precomputed native open-edge graph, 128 games | 19.70 | 1751.79 |
 | compact parallel-list MCTS edges, 128 games | 14.30 | 2412.83 |
 | contiguous evaluator outputs, 128 games | 14.26 | 2420.19 |
+| single-FFI native batch encoding, 128 games | 14.40 | 2397.46 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -74,6 +75,13 @@ expansion preserves numerical equivalence and the public list API, but changes
 the fixed workload only from 14.30 to 14.26 seconds (about 0.3%). This confirms
 that output list materialization is not a material bottleneck. The array path
 is retained as the cleaner future CPU-to-GPU batch boundary.
+
+A true native batch-encoding ABI reduces ctypes crossings and keeps a single
+contiguous `float32[N,8,S,S]` output buffer. On the fixed workload it is
+performance-neutral within run noise (14.26 versus 14.40 seconds): packing the
+structure-of-arrays arguments offsets the saved calls. It is retained because
+it preserves differential equivalence and is the required whole-batch input
+boundary for a future GPU path, not because it improves the current CPU run.
 
 ## Native extension boundary
 

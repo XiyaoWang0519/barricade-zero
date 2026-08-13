@@ -269,3 +269,20 @@ extern "C" int bz_encode_state_f32(int n, int p0, int p1, uint64_t h, uint64_t v
     board.distance_plane(1, output + 7 * cells);
     return 8 * cells;
 }
+
+extern "C" int bz_encode_state_batch_f32(
+    int n, int count, const int* p0, const int* p1,
+    const uint64_t* h, const uint64_t* v, const int* w0, const int* w1,
+    float* output, int capacity) {
+    int per_state = 8 * n * n;
+    int required = count * per_state;
+    if (capacity < required) return -required;
+    for (int index = 0; index < count; ++index) {
+        int result = bz_encode_state_f32(
+            n, p0[index], p1[index], h[index], v[index], w0[index], w1[index],
+            output + index * per_state, per_state
+        );
+        if (result != per_state) return -required;
+    }
+    return required;
+}

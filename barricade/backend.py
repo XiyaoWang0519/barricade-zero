@@ -96,6 +96,12 @@ class NativeRulesBackend:
             ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_float), ctypes.c_int,
         ]
         self.library.bz_encode_state_f32.restype = ctypes.c_int
+        self.library.bz_encode_state_batch_f32.argtypes = [
+            ctypes.c_int, ctypes.c_int,
+            int_pointer, int_pointer, uint64_pointer, uint64_pointer,
+            int_pointer, int_pointer, ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+        ]
+        self.library.bz_encode_state_batch_f32.restype = ctypes.c_int
 
     @staticmethod
     def _arguments(state: GameState) -> tuple[int, int, int, int, int]:
@@ -190,13 +196,25 @@ class NativeRulesBackend:
             raise ValueError("all states in an encoding batch must share board size")
         output = np.empty((len(states), 8, size, size), dtype=np.float32)
         per_state = 8 * size * size
-        for index, state in enumerate(states):
-            pointer = output[index].ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-            count = self.library.bz_encode_state_f32(
-                *self._arguments(state), *state.walls_remaining, pointer, per_state
-            )
-            if count != per_state:
-                raise RuntimeError(f"native encoder returned {count}, expected {per_state}")
+        arguments = [self._arguments(state) for state in states]
+        p0 = np.asarray([item[1] for item in arguments], dtype=np.int32)
+        p1 = np.asarray([item[2] for item in arguments], dtype=np.int32)
+        horizontal = np.asarray([item[3] for item in arguments], dtype=np.uint64)
+        vertical = np.asarray([item[4] for item in arguments], dtype=np.uint64)
+        w0 = np.asarray([state.walls_remaining[0] for state in states], dtype=np.int32)
+        w1 = np.asarray([state.walls_remaining[1] for state in states], dtype=np.int32)
+        int_pointer = ctypes.POINTER(ctypes.c_int)
+        uint64_pointer = ctypes.POINTER(ctypes.c_uint64)
+        expected = len(states) * per_state
+        count = self.library.bz_encode_state_batch_f32(
+            size, len(states),
+            p0.ctypes.data_as(int_pointer), p1.ctypes.data_as(int_pointer),
+            horizontal.ctypes.data_as(uint64_pointer), vertical.ctypes.data_as(uint64_pointer),
+            w0.ctypes.data_as(int_pointer), w1.ctypes.data_as(int_pointer),
+            output.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), expected,
+        )
+        if count != expected:
+            raise RuntimeError(f"native batch encoder returned {count}, expected {expected}")
         return output
 
 

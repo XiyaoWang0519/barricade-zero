@@ -92,9 +92,11 @@ class RulesBackendTests(unittest.TestCase):
     def test_native_batch_encoding_is_contiguous_float32_and_matches_reference(self):
         from barricade.backend import NativeRulesBackend
 
+        backend = NativeRulesBackend()
+        self.assertTrue(hasattr(backend.library, "bz_encode_state_batch_f32"))
         states = [GameState.initial(size=9, walls_per_player=10)]
         states.append(states[0].apply_action(states[0].legal_actions()[0]).canonical())
-        encoded = NativeRulesBackend().encode_batch(states)
+        encoded = backend.encode_batch(states)
         self.assertEqual(encoded.shape, (2, 8, 9, 9))
         self.assertEqual(encoded.dtype, np.float32)
         self.assertTrue(encoded.flags.c_contiguous)
