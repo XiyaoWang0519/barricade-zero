@@ -18,6 +18,9 @@ Implemented:
 - Canonical self-play trajectory generation `(state, MCTS policy, outcome)`
 - Configurable residual policy-value network and AdamW learner
 - Replay buffer and executable 5x5 end-to-end training smoke cycle
+- Neural-network-guided self-play generations
+- Balanced deterministic checkpoint arena and promotion threshold
+- Atomic generation checkpoints with resume support
 
 Create the training environment:
 
@@ -45,4 +48,18 @@ source .venv/bin/activate
 PYTHONPATH=. python scripts/train_smoke.py
 ```
 
-The next milestone is a small PyTorch policy-value network and replay learner on the 5x5 configuration before scaling to 9x9. The reference MCTS is intentionally readable Python; production self-play will later need batching and a compiled search path.
+Run one small neural self-play generation:
+
+```bash
+PYTHONPATH=. python scripts/train_generations.py \
+  --generations 1 --games 2 --simulations 8 --steps 4 --arena-games 2
+```
+
+Resume from a checkpoint:
+
+```bash
+PYTHONPATH=. python scripts/train_generations.py \
+  --resume checkpoints/generations/generation_001.pt
+```
+
+The next milestone is batched neural inference across concurrent 5x5 games, followed by stronger checkpoint tournaments. The reference MCTS is intentionally readable Python; production self-play will later need batching and a compiled search path.

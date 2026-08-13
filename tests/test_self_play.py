@@ -30,6 +30,27 @@ class SelfPlayTests(unittest.TestCase):
         )
         self.assertTrue(all(example.state.turn == 0 for example in examples))
 
+    def test_repeated_position_is_recorded_as_draw(self):
+        class CyclingSearch:
+            def search(self, state, temperature=1.0, add_noise=False):
+                from barricade.mcts import SearchResult
+
+                action = state.legal_pawn_actions()[-1]
+                visits = [0] * state.action_size
+                policy = [0.0] * state.action_size
+                visits[action] = 1
+                policy[action] = 1.0
+                return SearchResult(policy, visits, policy.copy())
+
+        examples = play_self_play_game(
+            GameState.initial(size=5, walls_per_player=0),
+            CyclingSearch(),
+            repetition_limit=2,
+            max_plies=20,
+        )
+        self.assertTrue(examples)
+        self.assertTrue(all(example.outcome == 0.0 for example in examples))
+
 
 if __name__ == "__main__":
     unittest.main()
