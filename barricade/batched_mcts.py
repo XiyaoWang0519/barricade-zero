@@ -232,9 +232,15 @@ class BatchedMCTS:
         pending = [root for root in roots if not root.expanded]
         if not pending:
             return
-        evaluations = self.evaluator.evaluate_batch(
-            [root.state for root in pending], mask_legal=False
-        )
+        if hasattr(self.evaluator, "evaluate_batch_arrays"):
+            policies, values = self.evaluator.evaluate_batch_arrays(
+                [root.state for root in pending], mask_legal=False
+            )
+            evaluations = zip(policies, values)
+        else:
+            evaluations = self.evaluator.evaluate_batch(
+                [root.state for root in pending], mask_legal=False
+            )
         self._expand_batch(pending, evaluations)
 
     def search_roots(
@@ -256,9 +262,15 @@ class BatchedMCTS:
             pending = [self._descend(root) for root in roots]
             nonterminal = [item for item in pending if item.terminal_value is None]
             if nonterminal:
-                leaf_evaluations = self.evaluator.evaluate_batch(
-                    [item.leaf.state for item in nonterminal], mask_legal=False
-                )
+                if hasattr(self.evaluator, "evaluate_batch_arrays"):
+                    policies, values = self.evaluator.evaluate_batch_arrays(
+                        [item.leaf.state for item in nonterminal], mask_legal=False
+                    )
+                    leaf_evaluations = list(zip(policies, values))
+                else:
+                    leaf_evaluations = self.evaluator.evaluate_batch(
+                        [item.leaf.state for item in nonterminal], mask_legal=False
+                    )
                 self._expand_batch(
                     [item.leaf for item in nonterminal], leaf_evaluations
                 )

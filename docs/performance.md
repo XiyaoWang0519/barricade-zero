@@ -24,6 +24,7 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | fixed-capacity native path-search storage, 128 games | 22.80 | 1514.08 |
 | precomputed native open-edge graph, 128 games | 19.70 | 1751.79 |
 | compact parallel-list MCTS edges, 128 games | 14.30 | 2412.83 |
+| contiguous evaluator outputs, 128 games | 14.26 | 2420.19 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -67,6 +68,12 @@ PUCT selection falls from about 4.52 to 1.43 seconds and tree descent from 5.93
 to 2.77 seconds. A mapping-compatible facade preserves tree-reuse and arena
 callers while the hot path uses indices directly. Evaluator/model forward now
 take about 4.53/2.09 seconds; native legality takes about 2.12 seconds.
+
+Keeping evaluator policies/values as contiguous NumPy arrays through MCTS
+expansion preserves numerical equivalence and the public list API, but changes
+the fixed workload only from 14.30 to 14.26 seconds (about 0.3%). This confirms
+that output list materialization is not a material bottleneck. The array path
+is retained as the cleaner future CPU-to-GPU batch boundary.
 
 ## Native extension boundary
 

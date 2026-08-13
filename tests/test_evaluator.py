@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 try:
     import torch
 except ImportError:
@@ -105,6 +107,28 @@ class NeuralEvaluatorTests(unittest.TestCase):
         array, tensor = evaluator.encode_inputs(states)
         self.assertEqual(tensor.data_ptr(), array.ctypes.data)
         self.assertEqual(tuple(tensor.shape), (2, 8, 5, 5))
+
+    def test_array_evaluation_matches_public_list_results(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        torch.manual_seed(71)
+        model = PolicyValueNetwork(5, channels=8, residual_blocks=1)
+        states = [
+            GameState.initial(size=5, walls_per_player=2),
+            GameState.initial(size=5, walls_per_player=2).apply_action(0),
+        ]
+        array_evaluator = NeuralEvaluator(model)
+        policies, values = array_evaluator.evaluate_batch_arrays(states, mask_legal=False)
+        list_evaluator = NeuralEvaluator(model)
+        expected = list_evaluator.evaluate_batch(states, mask_legal=False)
+        self.assertEqual(policies.dtype, np.float32)
+        self.assertEqual(values.dtype, np.float32)
+        self.assertTrue(policies.flags.c_contiguous)
+        self.assertEqual(policies.shape, (2, 40))
+        for index, (policy, value) in enumerate(expected):
+            np.testing.assert_allclose(policies[index], policy, rtol=1e-6, atol=1e-7)
+            self.assertAlmostEqual(float(values[index]), value, places=6)
 
 
 if __name__ == "__main__":

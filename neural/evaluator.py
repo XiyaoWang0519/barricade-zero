@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import torch
+import numpy as np
 
-from barricade.encoding import legal_action_mask, rotate_policy
+from barricade.encoding import legal_action_mask, policy_rotation_indices
 from barricade.backend import load_rules_backend
 from barricade.state import GameState
 from .model import masked_softmax
@@ -35,11 +36,11 @@ class NeuralEvaluator:
         return array, tensor
 
     @torch.inference_mode()
-    def evaluate_batch(
+    def evaluate_batch_arrays(
         self, states: list[GameState], mask_legal: bool = True
-    ) -> list[tuple[list[float], float]]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         if not states:
-            return []
+            return np.empty((0, 0), dtype=np.float32), np.empty(0, dtype=np.float32)
         canonicals = [state.canonical() for state in states]
         _array, inputs = self.encode_inputs(canonicals)
         self.model.eval()
@@ -50,17 +51,29 @@ class NeuralEvaluator:
                 dtype=torch.bool,
                 device=self.device,
             )
-            policies = masked_softmax(logits, masks).cpu().tolist()
+            policies = masked_softmax(logits, masks)
         else:
-            policies = torch.softmax(logits, dim=-1).cpu().tolist()
+            policies = torch.softmax(logits, dim=-1)
         self.forward_calls += 1
         self.positions_evaluated += len(states)
-        results = []
-        for original, policy, value in zip(states, policies, values[:, 0].cpu().tolist()):
+        policy_array = policies.cpu().numpy()
+        for index, original in enumerate(states):
             if original.turn == 1:
-                policy = rotate_policy(policy, original.size)
-            results.append((policy, float(value)))
-        return results
+                indices = np.asarray(
+                    policy_rotation_indices(original.size), dtype=np.intp
+                )
+                policy_array[index] = policy_array[index][indices]
+        return np.ascontiguousarray(policy_array), values[:, 0].cpu().numpy()
+
+    @torch.inference_mode()
+    def evaluate_batch(
+        self, states: list[GameState], mask_legal: bool = True
+    ) -> list[tuple[list[float], float]]:
+        policies, values = self.evaluate_batch_arrays(states, mask_legal)
+        return [
+            (policy.tolist(), float(value))
+            for policy, value in zip(policies, values)
+        ]
 
     def evaluate(self, state: GameState) -> tuple[list[float], float]:
         return self.evaluate_batch([state])[0]
