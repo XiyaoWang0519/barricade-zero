@@ -5,8 +5,9 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
+from collections.abc import Iterator
 
-from .mcts import EdgeStats, Node, SearchResult
+from .mcts import Node, SearchResult
 from .backend import load_rules_backend
 from .state import GameState
 
@@ -14,8 +15,81 @@ from .state import GameState
 @dataclass
 class _PendingSimulation:
     leaf: Node
-    path: list[EdgeStats]
+    path: list[tuple["CompactEdges", int]]
     terminal_value: float | None = None
+
+
+class _CompactEdgeView:
+    __slots__ = ("storage", "index")
+
+    def __init__(self, storage: "CompactEdges", index: int) -> None:
+        self.storage = storage
+        self.index = index
+
+    @property
+    def prior(self) -> float:
+        return self.storage.priors[self.index]
+
+    @prior.setter
+    def prior(self, value: float) -> None:
+        self.storage.priors[self.index] = value
+
+    @property
+    def visits(self) -> int:
+        return self.storage.visits[self.index]
+
+    @visits.setter
+    def visits(self, value: int) -> None:
+        delta = value - self.storage.visits[self.index]
+        self.storage.visits[self.index] = value
+        self.storage.total_visits += delta
+
+    @property
+    def value_sum(self) -> float:
+        return self.storage.value_sums[self.index]
+
+    @value_sum.setter
+    def value_sum(self, value: float) -> None:
+        self.storage.value_sums[self.index] = value
+
+    @property
+    def q(self) -> float:
+        visits = self.storage.visits[self.index]
+        return self.storage.value_sums[self.index] / visits if visits else 0.0
+
+
+class CompactEdges:
+    """Parallel-list edge storage with a read-compatible mapping facade."""
+
+    __slots__ = ("actions", "priors", "visits", "value_sums", "indices", "total_visits")
+
+    def __init__(self, actions: list[int], priors: list[float], action_size: int) -> None:
+        self.actions = actions
+        self.priors = priors
+        self.visits = [0] * len(actions)
+        self.value_sums = [0.0] * len(actions)
+        self.indices = [-1] * action_size
+        for index, action in enumerate(actions):
+            self.indices[action] = index
+        self.total_visits = 0
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.actions)
+
+    def __len__(self) -> int:
+        return len(self.actions)
+
+    def __getitem__(self, action: int) -> _CompactEdgeView:
+        index = self.indices[action]
+        if index < 0:
+            raise KeyError(action)
+        return _CompactEdgeView(self, index)
+
+    def values(self) -> Iterator[_CompactEdgeView]:
+        return (_CompactEdgeView(self, index) for index in range(len(self.actions)))
+
+    def items(self) -> Iterator[tuple[int, _CompactEdgeView]]:
+        return ((action, _CompactEdgeView(self, index)) for index, action in enumerate(self.actions))
 
 
 class BatchedMCTS:
@@ -52,7 +126,7 @@ class BatchedMCTS:
             priors = [1.0 / len(legal)] * len(legal)
         else:
             priors = [prior / total for prior in priors]
-        node.edges = {action: EdgeStats(prior) for action, prior in zip(legal, priors)}
+        node.edges = CompactEdges(list(legal), priors, node.state.action_size)
         node.expanded = True
 
     def _expand_batch(self, nodes: list[Node], evaluations) -> None:
@@ -80,27 +154,26 @@ class BatchedMCTS:
             )
 
     def _select(self, node: Node) -> int:
-        total_visits = sum(edge.visits for edge in node.edges.values())
-        scale = math.sqrt(total_visits + 1)
-        return max(
-            node.edges,
-            key=lambda action: (
-                node.edges[action].q
-                + self.c_puct
-                * node.edges[action].prior
-                * scale
-                / (1 + node.edges[action].visits),
-                -action,
-            ),
-        )
+        edges: CompactEdges = node.edges
+        scale = math.sqrt(edges.total_visits + 1)
+        best_index = 0
+        best_score = -math.inf
+        for index, action in enumerate(edges.actions):
+            visits = edges.visits[index]
+            q = edges.value_sums[index] / visits if visits else 0.0
+            score = q + self.c_puct * edges.priors[index] * scale / (1 + visits)
+            if score > best_score:
+                best_score = score
+                best_index = index
+        return edges.actions[best_index]
 
     def _descend(self, root: Node) -> _PendingSimulation:
         node = root
-        path: list[EdgeStats] = []
+        path: list[tuple[CompactEdges, int]] = []
         while node.expanded and not node.state.is_terminal():
             action = self._select(node)
-            edge = node.edges[action]
-            path.append(edge)
+            edges: CompactEdges = node.edges
+            path.append((edges, edges.indices[action]))
             if action not in node.children:
                 node.children[action] = Node(node.state.apply_known_legal_action(action))
             node = node.children[action]
@@ -108,12 +181,13 @@ class BatchedMCTS:
         return _PendingSimulation(node, path, terminal_value)
 
     @staticmethod
-    def _backup(path: list[EdgeStats], leaf_value: float) -> None:
+    def _backup(path: list[tuple[CompactEdges, int]], leaf_value: float) -> None:
         value = leaf_value
-        for edge in reversed(path):
+        for edges, index in reversed(path):
             value = -value
-            edge.visits += 1
-            edge.value_sum += value
+            edges.visits[index] += 1
+            edges.value_sums[index] += value
+            edges.total_visits += 1
 
     def _result(self, root: Node, temperature: float) -> SearchResult:
         size = root.state.action_size

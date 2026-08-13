@@ -102,6 +102,24 @@ class BatchedMCTSTests(unittest.TestCase):
             all(type(value) is int for wall in child.horizontal_walls | child.vertical_walls for value in wall)
         )
 
+    def test_batched_nodes_use_compact_edge_storage_with_mapping_contract(self):
+        from barricade.batched_mcts import BatchedMCTS, CompactEdges
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        state = GameState.initial(size=5, walls_per_player=2)
+        search = BatchedMCTS(
+            NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1)),
+            simulations=4,
+        )
+        roots = search.create_roots([state])
+        search.search_roots(roots)
+        edges = roots[0].edges
+        self.assertIsInstance(edges, CompactEdges)
+        self.assertEqual(list(edges), state.legal_actions())
+        self.assertEqual(sum(edge.visits for edge in edges.values()), 4)
+        self.assertAlmostEqual(sum(edge.prior for edge in edges.values()), 1.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()
