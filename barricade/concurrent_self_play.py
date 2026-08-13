@@ -134,7 +134,7 @@ def play_concurrent_games(
                 game.root = advanced
             else:
                 game.root = None
-            game.state = game.state.apply_action(action)
+            game.state = game.state.apply_known_legal_action(action)
             game.plies += 1
             if game.state.is_terminal():
                 completed_examples.extend(_finish(game, game.state.winner))

@@ -34,6 +34,13 @@ class ActionEncodingTests(unittest.TestCase):
 
 
 class InitialStateTests(unittest.TestCase):
+    def test_apply_known_legal_action_matches_validated_apply(self):
+        state = GameState.initial(size=5, walls_per_player=2)
+        for action in state.legal_actions():
+            self.assertEqual(
+                state.apply_known_legal_action(action), state.apply_action(action)
+            )
+
     def test_initial_state(self):
         state = GameState.initial()
         self.assertEqual(state.pawns, ((8, 4), (0, 4)))

@@ -27,6 +27,7 @@ Implemented:
 - Tree-reuse benchmark and retained-root visit metrics
 - Reproducible 5x5/9x9 cProfile harness
 - Bitset candidate-wall path checking and optional native-backend boundary
+- Dependency-free C++ rules backend loaded through ctypes with Python fallback
 
 Create the training environment:
 

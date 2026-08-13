@@ -7,6 +7,7 @@ import random
 from dataclasses import dataclass
 
 from .mcts import EdgeStats, Node, SearchResult
+from .backend import load_rules_backend
 from .state import GameState
 
 
@@ -26,6 +27,7 @@ class BatchedMCTS:
         dirichlet_alpha: float = 0.3,
         noise_fraction: float = 0.25,
         rng: random.Random | None = None,
+        rules_backend=None,
     ) -> None:
         if simulations <= 0:
             raise ValueError("simulations must be positive")
@@ -37,10 +39,10 @@ class BatchedMCTS:
         self.dirichlet_alpha = dirichlet_alpha
         self.noise_fraction = noise_fraction
         self.rng = rng or random.Random()
+        self.rules_backend = rules_backend or load_rules_backend()
 
-    @staticmethod
-    def _expand_from_evaluation(node: Node, policy: list[float]) -> None:
-        legal = node.state.legal_actions()
+    def _expand_from_evaluation(self, node: Node, policy: list[float]) -> None:
+        legal = self.rules_backend.legal_actions(node.state)
         priors = [max(0.0, float(policy[action])) for action in legal]
         total = sum(priors)
         if total <= 0:
@@ -84,7 +86,7 @@ class BatchedMCTS:
             edge = node.edges[action]
             path.append(edge)
             if action not in node.children:
-                node.children[action] = Node(node.state.apply_action(action))
+                node.children[action] = Node(node.state.apply_known_legal_action(action))
             node = node.children[action]
         terminal_value = node.state.outcome_for_current_player() if node.state.is_terminal() else None
         return _PendingSimulation(node, path, terminal_value)
@@ -128,11 +130,11 @@ class BatchedMCTS:
             raise ValueError("roots and actions must have equal length")
         advanced = []
         for root, action in zip(roots, actions):
-            if action not in root.state.legal_actions():
+            if action not in self.rules_backend.legal_actions(root.state):
                 raise ValueError(f"illegal root action: {action}")
             child = root.children.get(action)
             if child is None:
-                child = Node(root.state.apply_action(action))
+                child = Node(root.state.apply_known_legal_action(action))
             advanced.append(child)
         return advanced
 

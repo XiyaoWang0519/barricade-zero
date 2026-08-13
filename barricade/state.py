@@ -239,6 +239,10 @@ class GameState:
     def apply_action(self, action: int) -> GameState:
         if action not in self._legal_actions_tuple:
             raise IllegalAction(f"illegal action: {action}")
+        return self.apply_known_legal_action(action)
+
+    def apply_known_legal_action(self, action: int) -> GameState:
+        """Apply an action already validated by the current search backend."""
         pawns = self.pawns
         horizontal = self.horizontal_walls
         vertical = self.vertical_walls

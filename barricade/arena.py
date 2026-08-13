@@ -84,7 +84,7 @@ class Arena:
             )[0]
             action = result.best_action
             roots = tuple(search.advance_roots([root], [action])[0] for search, root in zip(searches, roots))
-            state = state.apply_action(action)
+            state = state.apply_known_legal_action(action)
             if state.is_terminal():
                 return state.winner
         return None

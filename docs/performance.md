@@ -16,14 +16,16 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | original Python rules + duplicate legal mask | 58.65 | 8.73 |
 | single legality scan | 40.24 | 12.72 |
 | bitset edges + candidate-wall BFS | 17.52 | 29.23 |
+| C++ rules + known-legal state transition | 1.87 | 274.07 |
 
-The current implementation is 3.35x faster than the original measured path.
-In the final profile, candidate-wall path checks remain the largest cumulative
-cost at about 10.9 seconds. Neural forward is about 5.0 seconds under cProfile.
+The current implementation is 31.4x faster than the original measured path.
+In the final profile, the neural evaluator is about 1.54 seconds, but only
+about 0.38 seconds is the PyTorch model forward. State feature encoding,
+especially BFS distance planes, is now the main remaining CPU cost.
 
 ## Native extension boundary
 
-The first compiled extension should implement the narrow interface in
+The first compiled extension implements the narrow interface in
 `barricade/backend.py`:
 
 1. `legal_actions(state)`
@@ -31,8 +33,10 @@ The first compiled extension should implement the narrow interface in
 
 Represent cells and blocked edges as integers/bitsets. Do not move PyTorch,
 self-play orchestration, replay storage, or checkpoint logic into C++ yet.
-The native backend must be differential-tested against `PythonRulesBackend`
-over random reachable states before it becomes the default.
+The native backend is differential-tested against `PythonRulesBackend` over
+random reachable 5x5 and 9x9 states. It is loaded through `ctypes`, requires no
+third-party binding package, and falls back to Python when the shared library
+is absent. Build it with `python scripts/build_native.py`.
 
 ## GPU gate
 

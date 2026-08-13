@@ -67,6 +67,21 @@ class BatchedMCTSTests(unittest.TestCase):
         advanced = search.advance_roots(roots, [action])
         self.assertEqual(advanced[0].state, state.apply_action(action))
 
+    def test_search_accepts_native_rules_backend(self):
+        from barricade.backend import NativeRulesBackend
+        from barricade.batched_mcts import BatchedMCTS
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        state = GameState.initial(size=5, walls_per_player=2)
+        search = BatchedMCTS(
+            NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1)),
+            simulations=2,
+            rules_backend=NativeRulesBackend(),
+        )
+        result = search.search_batch([state])[0]
+        self.assertIn(result.best_action, state.legal_actions())
+
 
 if __name__ == "__main__":
     unittest.main()
