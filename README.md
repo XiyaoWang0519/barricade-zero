@@ -28,6 +28,7 @@ Implemented:
 - Reproducible 5x5/9x9 cProfile harness
 - Bitset candidate-wall path checking and optional native-backend boundary
 - Dependency-free C++ rules backend loaded through ctypes with Python fallback
+- Differential-tested native 8-plane encoder including BFS distance features
 
 Create the training environment:
 

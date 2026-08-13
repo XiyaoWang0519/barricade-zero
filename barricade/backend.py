@@ -32,6 +32,11 @@ class PythonRulesBackend:
     ) -> bool:
         return state._has_path_with_extra_wall(player, orientation, row, col)
 
+    def encode_state(self, state: GameState) -> list[list[list[float]]]:
+        from .encoding import encode_state
+
+        return encode_state(state)
+
 
 def _wall_mask(walls: frozenset[tuple[int, int]], size: int) -> int:
     width = size - 1
@@ -55,6 +60,11 @@ class NativeRulesBackend:
             ctypes.POINTER(ctypes.c_int), ctypes.c_int,
         ]
         self.library.bz_legal_actions.restype = ctypes.c_int
+        self.library.bz_encode_state.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_uint64,
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+        ]
+        self.library.bz_encode_state.restype = ctypes.c_int
 
     @staticmethod
     def _arguments(state: GameState) -> tuple[int, int, int, int, int]:
@@ -88,6 +98,23 @@ class NativeRulesBackend:
         return bool(self.library.bz_has_path(
             *self._arguments(state), player, extra, row, col
         ))
+
+    def encode_state(self, state: GameState) -> list[list[list[float]]]:
+        capacity = 8 * state.size * state.size
+        output = (ctypes.c_double * capacity)()
+        count = self.library.bz_encode_state(
+            *self._arguments(state), *state.walls_remaining, output, capacity
+        )
+        if count != capacity:
+            raise RuntimeError(f"native encoder returned {count}, expected {capacity}")
+        size = state.size
+        cells = size * size
+        flat = list(output)
+        return [
+            [flat[plane * cells + row * size:plane * cells + (row + 1) * size]
+             for row in range(size)]
+            for plane in range(8)
+        ]
 
 
 def load_rules_backend(prefer_native: bool = True) -> RulesBackend:

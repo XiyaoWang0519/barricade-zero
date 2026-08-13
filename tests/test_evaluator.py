@@ -80,6 +80,22 @@ class NeuralEvaluatorTests(unittest.TestCase):
         self.assertAlmostEqual(sum(policy), 1.0, places=6)
         self.assertTrue(-1 <= value <= 1)
 
+    def test_native_and_python_encoding_produce_same_evaluation(self):
+        from barricade.backend import NativeRulesBackend, PythonRulesBackend
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        torch.manual_seed(301)
+        model = PolicyValueNetwork(9, channels=8, residual_blocks=1)
+        states = [GameState.initial(size=9, walls_per_player=10)]
+        python_result = NeuralEvaluator(
+            model, encoding_backend=PythonRulesBackend()
+        ).evaluate_batch(states, mask_legal=False)
+        native_result = NeuralEvaluator(
+            model, encoding_backend=NativeRulesBackend()
+        ).evaluate_batch(states, mask_legal=False)
+        self.assertEqual(python_result, native_result)
+
 
 if __name__ == "__main__":
     unittest.main()

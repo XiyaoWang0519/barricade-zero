@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import torch
 
-from barricade.encoding import encode_state, legal_action_mask, rotate_policy
+from barricade.encoding import legal_action_mask, rotate_policy
+from barricade.backend import load_rules_backend
 from barricade.state import GameState
 from .model import masked_softmax
 
 
 class NeuralEvaluator:
-    def __init__(self, model: torch.nn.Module, device: str | torch.device = "cpu") -> None:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        device: str | torch.device = "cpu",
+        encoding_backend=None,
+    ) -> None:
         self.device = torch.device(device)
         self.model = model.to(self.device)
         self.forward_calls = 0
         self.positions_evaluated = 0
+        self.encoding_backend = encoding_backend or load_rules_backend()
 
     @property
     def average_batch_size(self) -> float:
@@ -28,7 +35,9 @@ class NeuralEvaluator:
             return []
         canonicals = [state.canonical() for state in states]
         inputs = torch.tensor(
-            [encode_state(state) for state in canonicals], dtype=torch.float32, device=self.device
+            [self.encoding_backend.encode_state(state) for state in canonicals],
+            dtype=torch.float32,
+            device=self.device,
         )
         self.model.eval()
         logits, values = self.model(inputs)

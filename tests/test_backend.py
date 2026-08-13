@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from barricade.backend import PythonRulesBackend, load_rules_backend
+from barricade.encoding import encode_state
 from barricade.state import GameState
 
 
@@ -68,6 +69,23 @@ class RulesBackendTests(unittest.TestCase):
             NativeRulesBackend().legal_actions(
                 GameState.initial(size=11, walls_per_player=10)
             )
+
+    def test_native_encoding_matches_python_on_random_reachable_states(self):
+        from barricade.backend import NativeRulesBackend
+
+        native = NativeRulesBackend()
+        rng = random.Random(211)
+        for size, walls in ((5, 4), (9, 10)):
+            state = GameState.initial(size=size, walls_per_player=walls)
+            for _ in range(20):
+                canonical = state.canonical()
+                self.assertEqual(
+                    native.encode_state(canonical), encode_state(canonical)
+                )
+                actions = state.legal_actions()
+                if not actions or state.is_terminal():
+                    break
+                state = state.apply_action(rng.choice(actions))
 
 
 if __name__ == "__main__":
