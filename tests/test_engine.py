@@ -90,6 +90,23 @@ class PawnMovementTests(unittest.TestCase):
 
 
 class WallLegalityTests(unittest.TestCase):
+    def test_fast_candidate_path_check_matches_materialized_state(self):
+        rng = random.Random(91)
+        state = GameState.initial(size=5, walls_per_player=4)
+        for _ in range(12):
+            legal_walls = [action for action in state.legal_actions() if action >= 8]
+            if not legal_walls:
+                break
+            action = rng.choice(legal_walls)
+            orientation, row, col = decode_wall_action(action, state.size)
+            candidate = state._with_wall(orientation, row, col)
+            for player in (0, 1):
+                self.assertEqual(
+                    state._has_path_with_extra_wall(player, orientation, row, col),
+                    candidate.has_path(player),
+                )
+            state = state.apply_action(action)
+
     def test_wall_decrements_inventory_and_blocks_edges(self):
         state = GameState.initial(size=5, walls_per_player=2)
         action = encode_wall_action("H", 2, 1, 5)

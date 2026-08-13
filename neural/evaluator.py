@@ -21,19 +21,26 @@ class NeuralEvaluator:
         return self.positions_evaluated / self.forward_calls if self.forward_calls else 0.0
 
     @torch.inference_mode()
-    def evaluate_batch(self, states: list[GameState]) -> list[tuple[list[float], float]]:
+    def evaluate_batch(
+        self, states: list[GameState], mask_legal: bool = True
+    ) -> list[tuple[list[float], float]]:
         if not states:
             return []
         canonicals = [state.canonical() for state in states]
         inputs = torch.tensor(
             [encode_state(state) for state in canonicals], dtype=torch.float32, device=self.device
         )
-        masks = torch.tensor(
-            [legal_action_mask(state) for state in canonicals], dtype=torch.bool, device=self.device
-        )
         self.model.eval()
         logits, values = self.model(inputs)
-        policies = masked_softmax(logits, masks).cpu().tolist()
+        if mask_legal:
+            masks = torch.tensor(
+                [legal_action_mask(state) for state in canonicals],
+                dtype=torch.bool,
+                device=self.device,
+            )
+            policies = masked_softmax(logits, masks).cpu().tolist()
+        else:
+            policies = torch.softmax(logits, dim=-1).cpu().tolist()
         self.forward_calls += 1
         self.positions_evaluated += len(states)
         results = []

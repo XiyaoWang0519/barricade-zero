@@ -86,19 +86,63 @@ class GameState:
                 result.append(nxt)
         return result
 
-    def has_path(self, player: int) -> bool:
-        goal_row = 0 if player == 0 else self.size - 1
-        queue = deque([self.pawns[player]])
-        seen = {self.pawns[player]}
+    @cached_property
+    def _blocked_edge_masks(self) -> tuple[int, int]:
+        """Bitsets for row-crossing and column-crossing edges."""
+        horizontal = 0
+        vertical = 0
+        for row, col in self.horizontal_walls:
+            horizontal |= 1 << (row * self.size + col)
+            horizontal |= 1 << (row * self.size + col + 1)
+        for row, col in self.vertical_walls:
+            vertical |= 1 << (row * (self.size - 1) + col)
+            vertical |= 1 << ((row + 1) * (self.size - 1) + col)
+        return horizontal, vertical
+
+    def _has_path_with_extra_wall(
+        self,
+        player: int,
+        orientation: str | None = None,
+        row: int = 0,
+        col: int = 0,
+    ) -> bool:
+        horizontal, vertical = self._blocked_edge_masks
+        if orientation == "H":
+            horizontal |= 1 << (row * self.size + col)
+            horizontal |= 1 << (row * self.size + col + 1)
+        elif orientation == "V":
+            vertical |= 1 << (row * (self.size - 1) + col)
+            vertical |= 1 << ((row + 1) * (self.size - 1) + col)
+
+        size = self.size
+        goal_row = 0 if player == 0 else size - 1
+        start_row, start_col = self.pawns[player]
+        start = start_row * size + start_col
+        queue = deque([start])
+        seen = 1 << start
         while queue:
             cell = queue.popleft()
-            if cell[0] == goal_row:
+            current_row, current_col = divmod(cell, size)
+            if current_row == goal_row:
                 return True
-            for nxt in self.neighbors(cell):
-                if nxt not in seen:
-                    seen.add(nxt)
+            candidates = []
+            if current_row > 0 and not horizontal & (1 << ((current_row - 1) * size + current_col)):
+                candidates.append(cell - size)
+            if current_row + 1 < size and not horizontal & (1 << (current_row * size + current_col)):
+                candidates.append(cell + size)
+            if current_col > 0 and not vertical & (1 << (current_row * (size - 1) + current_col - 1)):
+                candidates.append(cell - 1)
+            if current_col + 1 < size and not vertical & (1 << (current_row * (size - 1) + current_col)):
+                candidates.append(cell + 1)
+            for nxt in candidates:
+                bit = 1 << nxt
+                if not seen & bit:
+                    seen |= bit
                     queue.append(nxt)
         return False
+
+    def has_path(self, player: int) -> bool:
+        return self._has_path_with_extra_wall(player)
 
     def shortest_path_distance(self, player: int) -> int | None:
         goal_row = 0 if player == 0 else self.size - 1
@@ -183,8 +227,9 @@ class GameState:
                 for col in range(self.size - 1):
                     if not self._wall_geometry_legal(orientation, row, col):
                         continue
-                    candidate = self._with_wall(orientation, row, col)
-                    if candidate.has_path(0) and candidate.has_path(1):
+                    if self._has_path_with_extra_wall(
+                        0, orientation, row, col
+                    ) and self._has_path_with_extra_wall(1, orientation, row, col):
                         actions.append(encode_wall_action(orientation, row, col, self.size))
         return tuple(actions)
 

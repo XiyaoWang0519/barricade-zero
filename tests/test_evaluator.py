@@ -70,6 +70,16 @@ class NeuralEvaluatorTests(unittest.TestCase):
         self.assertEqual(evaluator.positions_evaluated, 4)
         self.assertEqual(evaluator.average_batch_size, 2.0)
 
+    def test_unmasked_batch_skips_legal_action_generation(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        state = GameState.initial(size=5, walls_per_player=2)
+        evaluator = NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1))
+        policy, value = evaluator.evaluate_batch([state], mask_legal=False)[0]
+        self.assertAlmostEqual(sum(policy), 1.0, places=6)
+        self.assertTrue(-1 <= value <= 1)
+
 
 if __name__ == "__main__":
     unittest.main()

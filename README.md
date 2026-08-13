@@ -25,6 +25,8 @@ Implemented:
 - Inference batching metrics and sequential-vs-batched benchmark
 - Persistent MCTS subtree reuse between moves
 - Tree-reuse benchmark and retained-root visit metrics
+- Reproducible 5x5/9x9 cProfile harness
+- Bitset candidate-wall path checking and optional native-backend boundary
 
 Create the training environment:
 
@@ -79,3 +81,6 @@ PYTHONPATH=. python scripts/benchmark_tree_reuse.py --games 32 --simulations 64
 ```
 
 The next milestone is stronger checkpoint tournaments and profiling the Python rules/search hot paths before a compiled implementation. With 64 concurrent 5x5 games, the current CPU pipeline reaches an average inference batch near 32; production 9x9 training should target 64–256.
+
+See [`docs/performance.md`](docs/performance.md) for current 9x9 profiles,
+optimization results, the native-extension boundary, and the GPU readiness gate.

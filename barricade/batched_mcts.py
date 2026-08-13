@@ -140,7 +140,9 @@ class BatchedMCTS:
         pending = [root for root in roots if not root.expanded]
         if not pending:
             return
-        evaluations = self.evaluator.evaluate_batch([root.state for root in pending])
+        evaluations = self.evaluator.evaluate_batch(
+            [root.state for root in pending], mask_legal=False
+        )
         for root, (policy, _value) in zip(pending, evaluations):
             self._expand_from_evaluation(root, policy)
 
@@ -163,7 +165,9 @@ class BatchedMCTS:
             pending = [self._descend(root) for root in roots]
             nonterminal = [item for item in pending if item.terminal_value is None]
             if nonterminal:
-                leaf_evaluations = self.evaluator.evaluate_batch([item.leaf.state for item in nonterminal])
+                leaf_evaluations = self.evaluator.evaluate_batch(
+                    [item.leaf.state for item in nonterminal], mask_legal=False
+                )
                 for item, (policy, value) in zip(nonterminal, leaf_evaluations):
                     self._expand_from_evaluation(item.leaf, policy)
                     self._backup(item.path, value)
