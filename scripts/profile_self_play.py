@@ -18,10 +18,13 @@ from neural.evaluator import NeuralEvaluator
 from neural.model import PolicyValueNetwork
 
 
-def run_workload(board_size: int, walls: int, games: int, simulations: int, seed: int) -> dict:
+def run_workload(
+    board_size: int, walls: int, games: int, simulations: int, seed: int,
+    channels: int = 16, residual_blocks: int = 2,
+) -> dict:
     torch.manual_seed(seed)
     evaluator = NeuralEvaluator(
-        PolicyValueNetwork(board_size, channels=16, residual_blocks=2)
+        PolicyValueNetwork(board_size, channels=channels, residual_blocks=residual_blocks)
     )
     started = time.perf_counter()
     result = play_concurrent_games(
@@ -39,6 +42,8 @@ def run_workload(board_size: int, walls: int, games: int, simulations: int, seed
         "walls": walls,
         "games": games,
         "simulations": simulations,
+        "channels": channels,
+        "residual_blocks": residual_blocks,
         "examples": len(result.examples),
         "draws": result.draws,
         "seconds": elapsed,
@@ -56,6 +61,8 @@ def main() -> None:
     parser.add_argument("--walls", type=int, default=10)
     parser.add_argument("--games", type=int, default=8)
     parser.add_argument("--simulations", type=int, default=8)
+    parser.add_argument("--channels", type=int, default=16)
+    parser.add_argument("--blocks", type=int, default=2)
     parser.add_argument("--seed", type=int, default=51)
     parser.add_argument("--profile", default="profiles/self_play.prof")
     parser.add_argument("--top", type=int, default=25)
@@ -65,7 +72,8 @@ def main() -> None:
     profiler = cProfile.Profile()
     profiler.enable()
     summary = run_workload(
-        args.board_size, args.walls, args.games, args.simulations, args.seed
+        args.board_size, args.walls, args.games, args.simulations, args.seed,
+        args.channels, args.blocks,
     )
     profiler.disable()
     profiler.dump_stats(profile_path)

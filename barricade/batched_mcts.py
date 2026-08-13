@@ -6,10 +6,26 @@ import math
 import random
 from dataclasses import dataclass
 from collections.abc import Iterator
+import numpy as np
 
 from .mcts import Node, SearchResult
 from .backend import load_rules_backend
 from .state import GameState
+
+
+def normalize_legal_priors(policy, legal: list[int]) -> list[float]:
+    if isinstance(policy, np.ndarray):
+        indices = np.asarray(legal, dtype=np.intp)
+        priors = np.maximum(policy[indices], 0.0).astype(np.float64, copy=False)
+        total = float(priors.sum())
+        if total > 0.0:
+            return (priors / total).tolist()
+        return [1.0 / len(legal)] * len(legal)
+    priors = [max(0.0, float(policy[action])) for action in legal]
+    total = sum(priors)
+    if total <= 0.0:
+        return [1.0 / len(legal)] * len(legal)
+    return [prior / total for prior in priors]
 
 
 @dataclass
@@ -120,12 +136,7 @@ class BatchedMCTS:
     ) -> None:
         if legal is None:
             legal = self.rules_backend.legal_actions(node.state)
-        priors = [max(0.0, float(policy[action])) for action in legal]
-        total = sum(priors)
-        if total <= 0:
-            priors = [1.0 / len(legal)] * len(legal)
-        else:
-            priors = [prior / total for prior in priors]
+        priors = normalize_legal_priors(policy, legal)
         node.edges = CompactEdges(list(legal), priors, node.state.action_size)
         node.expanded = True
 

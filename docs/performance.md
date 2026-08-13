@@ -26,6 +26,8 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | compact parallel-list MCTS edges, 128 games | 14.30 | 2412.83 |
 | contiguous evaluator outputs, 128 games | 14.26 | 2420.19 |
 | single-FFI native batch encoding, 128 games | 14.40 | 2397.46 |
+| vectorized legal-prior normalization, 128 games | 13.40 | 2575.57 |
+| candidate 64x6 network, 128 games | 30.24 | 1320.76 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -83,6 +85,19 @@ structure-of-arrays arguments offsets the saved calls. It is retained because
 it preserves differential equivalence and is the required whole-batch input
 boundary for a future GPU path, not because it improves the current CPU run.
 
+Vectorized legal-action indexing and prior normalization lowers the 16x2
+search workload from 14.40 to 13.40 seconds. Expansion falls to about 1.34
+seconds and the measured call count drops by roughly 1.8 million.
+
+The historical fixed profile deliberately used a 16-channel, 2-block smoke
+network to expose rules and search overhead. The harness now records and accepts
+network dimensions explicitly. With a candidate training network of 64 channels
+and 6 residual blocks, the 128-game workload averages a 90.55-position inference
+batch and takes 30.24 seconds. Model forward alone takes 17.36 seconds (about
+57% of wall time), while expansion is about 4.04 seconds and all other individual
+hotspots are smaller. This is the first configuration that satisfies the full
+GPU-readiness gate.
+
 ## Native extension boundary
 
 The first compiled extension implements the narrow interface in
@@ -101,10 +116,10 @@ is absent. Build it with `python scripts/build_native.py`.
 ## GPU gate
 
 Do not rent a GPU while rules/search dominate. Re-profile after native rules.
-The batch-size half of the GPU gate is satisfied: 128 concurrent games produce
-an average batch of 86.1. However, model forward is only about 4.14 of 30.78
-seconds in the pre-CSR workload, 2.47 of 28.77 seconds after CSR batching, and
-2.09 of 14.30 seconds after compact MCTS edges (roughly 15%). GPU rental
-should wait until
-batched/native legal-action generation and tree-search work make model forward
-the sustained dominant cost.
+The GPU gate is now satisfied for the candidate 64x6 training network. At 128
+concurrent games the average inference batch is 90.55 and model forward is
+17.36 of 30.24 seconds (about 57%), making it the sustained dominant cost.
+Rules, encoding, checkpoint/resume, arena, and real optimizer/checkpoint learning
+loops have all passed their verification gates. Further throughput work should
+therefore move model inference/training to a CUDA GPU rather than continue CPU
+micro-optimization of the 16x2 smoke profile.

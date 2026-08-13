@@ -1,6 +1,8 @@
 import random
 import unittest
 
+import numpy as np
+
 try:
     import torch
 except ImportError:
@@ -11,6 +13,20 @@ from barricade.state import GameState
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class BatchedMCTSTests(unittest.TestCase):
+    def test_legal_priors_array_matches_reference_and_uniform_fallback(self):
+        from barricade.batched_mcts import normalize_legal_priors
+
+        policy = np.asarray([0.1, -0.4, 0.2, 0.0, 0.7], dtype=np.float32)
+        np.testing.assert_allclose(
+            normalize_legal_priors(policy, [0, 2, 4]),
+            np.asarray([0.1, 0.2, 0.7]) / 1.0,
+            rtol=1e-6,
+        )
+        np.testing.assert_allclose(
+            normalize_legal_priors(np.zeros(5, dtype=np.float32), [1, 3]),
+            [0.5, 0.5],
+        )
+
     def test_multiple_roots_share_model_forward_calls(self):
         from barricade.batched_mcts import BatchedMCTS
         from neural.evaluator import NeuralEvaluator
