@@ -70,6 +70,26 @@ class GenerationDeviceTests(unittest.TestCase):
             summary["trained_candidate_sha256"],
         )
         self.assertEqual(len(summary["checkpoint_sha256"]), 64)
+        self.assertGreaterEqual(summary["self_play_seconds"], 0.0)
+        self.assertGreaterEqual(summary["candidate_setup_seconds"], 0.0)
+        self.assertGreaterEqual(summary["training_seconds"], 0.0)
+        self.assertGreaterEqual(summary["candidate_hash_seconds"], 0.0)
+        self.assertGreaterEqual(summary["arena_seconds"], 0.0)
+        self.assertGreaterEqual(summary["promotion_seconds"], 0.0)
+        self.assertGreaterEqual(summary["checkpoint_seconds"], 0.0)
+        self.assertGreaterEqual(summary["generation_seconds"], 0.0)
+        self.assertAlmostEqual(
+            summary["generation_seconds"],
+            summary["self_play_seconds"]
+            + summary["candidate_setup_seconds"]
+            + summary["training_seconds"]
+            + summary["candidate_hash_seconds"]
+            + summary["arena_seconds"]
+            + summary["promotion_seconds"]
+            + summary["checkpoint_seconds"]
+            + summary["generation_overhead_seconds"],
+            places=6,
+        )
 
     def test_resume_restores_replay_and_rng_state(self):
         from training.generations import GenerationConfig, GenerationTrainer

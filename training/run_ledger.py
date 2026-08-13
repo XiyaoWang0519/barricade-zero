@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 
 _CHECKPOINT_PATTERN = re.compile(r"generation_(\d+)\.pt$")
+_BACKWARD_COMPATIBLE_OPTIONAL_CONFIG = {"torch_threads": None}
 
 
 def _timestamp() -> str:
@@ -41,7 +42,16 @@ class RunLedger:
     def _ensure_manifest(self) -> None:
         if self.manifest_path.exists():
             manifest = json.loads(self.manifest_path.read_text())
-            if manifest.get("config") != self.config:
+            existing_config = manifest.get("config")
+            comparable_config = dict(self.config)
+            if isinstance(existing_config, dict):
+                for key, default in _BACKWARD_COMPATIBLE_OPTIONAL_CONFIG.items():
+                    if (
+                        key not in existing_config
+                        and comparable_config.get(key) == default
+                    ):
+                        comparable_config.pop(key, None)
+            if existing_config != comparable_config:
                 raise ValueError(
                     f"training configuration does not match existing run in {self.root}"
                 )

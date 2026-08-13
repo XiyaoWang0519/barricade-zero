@@ -9,6 +9,41 @@ except ImportError:
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class LearnerTests(unittest.TestCase):
+    def test_native_batch_assembly_matches_python_reference_exactly(self):
+        from barricade.actions import action_size
+        from barricade.encoding import encode_state
+        from barricade.self_play import TrainingExample
+        from barricade.state import GameState
+        from neural.model import PolicyValueNetwork
+        from training.learner import Learner
+
+        first = GameState.initial(size=9, walls_per_player=10)
+        second = first.apply_action(first.legal_actions()[0]).canonical()
+        policy = [0.0] * action_size(9)
+        policy[0] = 1.0
+        examples = [
+            TrainingExample(first, policy, 1.0),
+            TrainingExample(second, policy, -1.0),
+        ]
+        learner = Learner(
+            PolicyValueNetwork(board_size=9, channels=8, residual_blocks=1)
+        )
+
+        states, policies, outcomes = learner._batch(examples)
+        expected_states = torch.tensor(
+            [encode_state(example.state) for example in examples], dtype=torch.float32
+        )
+        expected_policies = torch.tensor(
+            [example.policy for example in examples], dtype=torch.float32
+        )
+        expected_outcomes = torch.tensor(
+            [[example.outcome] for example in examples], dtype=torch.float32
+        )
+
+        self.assertTrue(torch.equal(states.cpu(), expected_states))
+        self.assertTrue(torch.equal(policies.cpu(), expected_policies))
+        self.assertTrue(torch.equal(outcomes.cpu(), expected_outcomes))
+
     def test_training_step_updates_parameters_and_returns_finite_metrics(self):
         from barricade.mcts import MCTS, UniformEvaluator
         from barricade.self_play import play_self_play_game

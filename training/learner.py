@@ -6,10 +6,11 @@ import random
 from collections import deque
 from typing import Iterable, Iterator
 
+import numpy as np
 import torch
 import torch.nn.functional as functional
 
-from barricade.encoding import encode_state
+from barricade.backend import load_rules_backend
 from barricade.self_play import TrainingExample
 
 
@@ -44,27 +45,27 @@ class Learner:
         value_weight: float = 1.0,
         gradient_clip: float = 1.0,
         device: str | torch.device = "cpu",
+        encoding_backend=None,
     ) -> None:
         self.device = torch.device(device)
         self.model = model.to(self.device)
         self.value_weight = value_weight
         self.gradient_clip = gradient_clip
+        self.encoding_backend = encoding_backend or load_rules_backend()
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
 
     def _batch(self, examples: list[TrainingExample]) -> tuple[torch.Tensor, ...]:
-        states = torch.tensor(
-            [encode_state(example.state) for example in examples],
-            dtype=torch.float32,
-            device=self.device,
-        )
-        policies = torch.tensor(
-            [example.policy for example in examples], dtype=torch.float32, device=self.device
-        )
-        outcomes = torch.tensor(
-            [[example.outcome] for example in examples], dtype=torch.float32, device=self.device
-        )
+        states = torch.from_numpy(
+            self.encoding_backend.encode_batch([example.state for example in examples])
+        ).to(self.device)
+        policies = torch.from_numpy(
+            np.asarray([example.policy for example in examples], dtype=np.float32)
+        ).to(self.device)
+        outcomes = torch.from_numpy(
+            np.asarray([[example.outcome] for example in examples], dtype=np.float32)
+        ).to(self.device)
         return states, policies, outcomes
 
     def train_batch(self, examples: list[TrainingExample]) -> dict[str, float]:

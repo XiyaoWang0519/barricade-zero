@@ -3,6 +3,8 @@ import argparse
 import json
 from dataclasses import asdict
 
+import torch
+
 from training.generations import GenerationConfig, GenerationTrainer
 from training.run_ledger import RunLedger, latest_checkpoint
 
@@ -29,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--resume-latest", action="store_true")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--mixed-precision", action="store_true")
+    parser.add_argument("--torch-threads", type=int)
     parser.add_argument("--seed", type=int, default=21)
     return parser
 
@@ -50,6 +53,7 @@ def config_from_args(args: argparse.Namespace) -> GenerationConfig:
         promotion_score=args.promotion_score,
         seed=args.seed,
         mixed_precision=args.mixed_precision,
+        torch_threads=args.torch_threads,
     )
 
 
@@ -63,6 +67,7 @@ def main() -> None:
         trainer.resume(resume_path)
     for _ in range(args.generations):
         summary = trainer.run_generation()
+        summary["torch_threads"] = torch.get_num_threads()
         ledger.record(summary)
         print(json.dumps(summary, sort_keys=True), flush=True)
 

@@ -2,6 +2,28 @@ import unittest
 
 
 class ProfileSelfPlayTests(unittest.TestCase):
+    def test_summary_records_explicit_torch_thread_count(self):
+        import torch
+
+        from scripts.profile_self_play import run_workload
+
+        previous = torch.get_num_threads()
+        try:
+            summary = run_workload(
+                board_size=5,
+                walls=0,
+                games=1,
+                simulations=1,
+                seed=92,
+                channels=8,
+                residual_blocks=1,
+                torch_threads=1,
+            )
+            self.assertEqual(summary["torch_threads"], 1)
+            self.assertEqual(torch.get_num_threads(), 1)
+        finally:
+            torch.set_num_threads(previous)
+
     def test_summarize_runs_reports_median_and_dispersion(self):
         from scripts.profile_self_play import summarize_runs
 

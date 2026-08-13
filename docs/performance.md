@@ -267,6 +267,7 @@ profiles/native-final-cpu-128.prof
 | Bit-parallel distance planes | Native encoder still used two heap-backed multi-source BFS traversals | Direct encoding timer improved about 2%; matched total 15.292 -> 14.694 s (-3.9%) and non-model 0.550 -> 0.508 s (-7.6%), with exact plane differentials | retained; attribution marked mixed |
 | Guard evaluator mode | Recursive `model.eval()` ran on every forward call | Total 14.694 -> 14.281 s (-2.8%), non-model 0.508 -> 0.461 s | retained |
 | Immutable repetition key | JSON serialization was the largest remaining Python-only item | Non-model 0.461 -> 0.461 s; no measurable gain | rejected and reverted |
+| Native training-batch assembly | Training rebuilt state tensors through nested Python lists on every optimizer step | Exact 128-example assembly 25.28 -> 0.69 ms; full-generation training phase 0.688 -> 0.553 s (-19.6%) | retained |
 
 The native session uses compact integer node IDs and arena ownership, executes
 selection/state transition/leaf preparation/expansion/backup natively, and
@@ -329,7 +330,7 @@ and `profiles/native-final-cpu-128.json`.
 
 ### Correctness evidence
 
-- 102 Git-tracked tests passed; 3 CUDA-only tests skipped locally.
+- 105 Git-tracked tests passed; 3 CUDA-only tests skipped locally.
 - Randomized reachable native/Python legality and eight-plane encoding
   differentials pass on 5x5 and 9x9 states.
 - Native and Python MCTS match root visits and policies; native successor state
@@ -357,3 +358,144 @@ removed, but exact final total/model/non-model GPU speedups require the same
 one-warm-up/five-repetition primary run and concurrency sweep on an RTX
 3090/4090. Do not project the 5.095x local non-model speedup onto CUDA as a
 measured result.
+
+## Matched CPU thread tuning and final local result
+
+The first local series inherited PyTorch's 10-thread default. A clean-process
+inference sweep over representative 9x9 batches (16, 32, 64, 128, and 256)
+showed that four intra-op threads are optimal on this Apple Silicon host:
+
+| PyTorch threads | representative inference seconds | relative to 10 threads |
+|---:|---:|---:|
+| 1 | 3.319 | 0.52x |
+| 2 | 1.927 | 0.90x |
+| 4 | 1.322 | 1.31x |
+| 6 | 1.414 | 1.23x |
+| 8 | 1.578 | 1.10x |
+| 10 | 1.734 | 1.00x |
+
+The harness accepts `--torch-threads`; the generation CLI accepts the same
+option and persists it in `GenerationConfig` and the run ledger. It is never a
+hidden benchmark-only default. CUDA experiments should continue to record the
+setting but must re-sweep rather than assume four CPU threads is optimal for a
+GPU producer.
+
+To avoid comparing unlike thread settings, commit `323905b` (the exact local
+pre-series code) was exported into an isolated `/tmp` directory, rebuilt with
+the same compiler mode, and measured at four threads with the same seed and
+primary workload. One warm-up and five unprofiled repetitions produced:
+
+| metric | pre-series `323905b`, 4 threads | final native, 4 threads | change |
+|---|---:|---:|---:|
+| total seconds median | 12.491 | 10.511 | 1.188x faster (-15.9%) |
+| model-forward seconds median | 10.099 | 10.085 | effectively unchanged |
+| non-model seconds median | 2.393 | 0.431 | 5.56x faster (-82.0%) |
+| positions/s median | 3,197.04 | 3,799.25 | +18.84% |
+| examples/s median | 403.09 | 479.02 | +18.84% |
+| seconds population stddev | 0.121 | 0.065 | — |
+
+An order-balanced contemporaneous Python-search/native-search A/B at four
+threads measured 11.456 versus 10.490 seconds (-8.4%) and 1.328 versus 0.451
+seconds outside the model (-66.1%). This isolates the native search benefit
+from thread tuning while preserving identical model weights, thread settings,
+positions, examples, draws, and subtree reuse.
+
+The authoritative final local artifacts are:
+
+```text
+profiles/native-final-cpu-4t-128.json
+profiles/native-final-cpu-4t-128.prof
+profiles/native-scaling-cpu-4t-{16,32,64,256}.json
+```
+
+### Four-thread concurrency sweep
+
+| games | seconds median (sigma) | positions/s | examples/s | seconds/example | average batch | median batch | peak RSS | draws |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 3.164 (0.201) | 1,585.77 | 200.08 | 0.004998 | 9.76 | 14 | 244 MiB | 13 |
+| 32 | 4.964 (0.040) | 2,060.46 | 260.25 | 0.003842 | 20.92 | 29 | 267 MiB | 26 |
+| 64 | 7.242 (0.153) | 2,799.75 | 352.66 | 0.002836 | 45.16 | 64 | 262 MiB | 54 |
+| 128 | 10.511 (0.065) | 3,799.25 | 479.02 | 0.002088 | 90.55 | 128 | 376 MiB | 106 |
+| 256 | 19.437 (0.204) | 4,119.91 | 518.10 | 0.001930 | 142.74 | 179 | 513 MiB | 221 |
+
+On this CPU, 256 games maximizes positions/s and examples/s, while 128 games
+remains the unchanged primary comparison. The 256-game point gains 8.4% more
+examples/s at the cost of roughly 137 MiB more peak RSS and a longer generation
+latency.
+
+### Rejected model-layout prototypes
+
+Once model inference became dominant, three local model paths were measured on
+representative 128-position batches:
+
+| prototype | setup cost | steady-state result | numerical result | decision |
+|---|---:|---:|---|---|
+| TorchScript trace | 0.59 s | 1.2% slower | exact | rejected |
+| `torch.compile(mode="reduce-overhead")` | 11.95 s | 5.7% slower | max absolute differences around 1.6e-5 policy and 4.7e-6 value | rejected |
+| channels-last input/model | negligible | 0.2% / 0.9% slower | exact | rejected |
+
+The model compilation/layout series failed to improve the matched workload.
+Together with the sub-5% full-generation result below, these provide consecutive
+well-founded attempts below the stopping threshold after thread tuning's large
+retained gain. Local optimization has therefore reached genuine diminishing
+returns. At the final 128-game median, only 0.431 seconds is outside the model
+and model forward occupies approximately 95.9% of total wall time. The remaining
+frontier requires a CUDA host: CUDA graphs or compiled CUDA execution,
+pinned/nonblocking transfers, and producer/inference overlap must be measured
+there rather than inferred from CPU behavior.
+
+## Complete-generation benchmark
+
+`scripts/benchmark_generation.py` applies the same one-warm-up/five-measured-run
+contract to a real training generation. It creates an isolated temporary
+checkpoint directory per repetition, times every phase inside
+`GenerationTrainer`, reports robust dispersion, and keeps an optional cProfile
+run outside the wall-clock sample. The primary generation retains the 9x9,
+10-wall, 128-game, 8-simulation, 64-channel, 6-block workload and adds four
+optimizer steps with batch size 128 plus a two-game arena:
+
+```bash
+PYTHONPATH=. python scripts/benchmark_generation.py \
+  --torch-threads 4 --warmups 1 --repetitions 5 \
+  --json-output profiles/native-generation-native-batch-cpu-4t.json \
+  --profile profiles/native-generation-native-batch-cpu-4t.prof
+```
+
+The newest full-generation profile identified Python training-batch assembly as
+the last meaningful non-inference micro-hotspot. `Learner` now routes all states
+through the already differential-tested native batch encoder and constructs
+policy/outcome tensors from contiguous float32 NumPy arrays. A representative
+128-example microbenchmark improved from 25.28 ms to 0.69 ms (36.4x); all three
+input tensors were bit-exact against the former Python path.
+
+| metric | Python training assembly | native contiguous assembly | change |
+|---|---:|---:|---:|
+| generation seconds median | 12.508 | 11.955 | 1.046x faster (-4.42%) |
+| generation seconds population stddev | 0.134 | 0.130 | -3.1% |
+| self-play seconds median | 11.315 | 10.869 | model/runtime drift; not attributed |
+| training seconds median | 0.688 | 0.553 | 1.244x faster (-19.6%) |
+| arena seconds median | 0.350 | 0.349 | unchanged |
+| checkpoint seconds median | 0.169 | 0.169 | unchanged |
+| examples/generation-second | 403.89 | 422.58 | +4.63% |
+| positions/generation-second | 3,200.06 | 3,348.06 | +4.63% |
+
+All five final repetitions produced exactly 5,052 new examples, 40,027
+self-play positions, 561 inference calls, average batch 71.35, two candidate
+wins, no arena draws, and promotion. The training-phase result is directly
+attributable; the independent series also showed a 0.446-second self-play shift,
+so the full 4.42% delta is reported conservatively rather than assigned wholly
+to batch assembly.
+
+At the final median, self-play consumes 10.869 seconds (90.9%), training 0.553
+(4.6%), arena 0.349 (2.9%), and checkpointing 0.169 (1.4%). Candidate setup,
+hashing, promotion, and unclassified overhead together are below 0.01 seconds
+(0.04%). The separate profile recorded 6.65 million calls versus 8.70 million
+before this change and still ranks convolution/model inference overwhelmingly first. Exact
+before/after reports and separate profiles are:
+
+```text
+profiles/native-generation-cpu-4t.json
+profiles/native-generation-cpu-4t.prof
+profiles/native-generation-native-batch-cpu-4t.json
+profiles/native-generation-native-batch-cpu-4t.prof
+```

@@ -15,6 +15,7 @@ class TrainingRunTests(unittest.TestCase):
                 "--learning-rate", "0.0001",
                 "--max-plies", "750",
                 "--promotion-score", "0.6",
+                "--torch-threads", "4",
                 "--resume-latest",
             ]
         )
@@ -25,6 +26,8 @@ class TrainingRunTests(unittest.TestCase):
         self.assertEqual(config.learning_rate, 1e-4)
         self.assertEqual(config.max_plies, 750)
         self.assertEqual(config.promotion_score, 0.6)
+        self.assertEqual(config.torch_threads, 4)
+        self.assertEqual(args.torch_threads, 4)
         self.assertTrue(args.resume_latest)
 
     def test_run_ledger_persists_config_and_generation_summaries(self):
@@ -53,6 +56,21 @@ class TrainingRunTests(unittest.TestCase):
             RunLedger(directory, {"board_size": 9, "seed": 7})
             with self.assertRaisesRegex(ValueError, "configuration does not match"):
                 RunLedger(directory, {"board_size": 9, "seed": 8})
+
+    def test_run_ledger_accepts_new_optional_default_for_an_older_manifest(self):
+        from training.run_ledger import RunLedger
+
+        with tempfile.TemporaryDirectory() as directory:
+            RunLedger(directory, {"board_size": 9, "seed": 7})
+            RunLedger(
+                directory,
+                {"board_size": 9, "seed": 7, "torch_threads": None},
+            )
+            with self.assertRaisesRegex(ValueError, "configuration does not match"):
+                RunLedger(
+                    directory,
+                    {"board_size": 9, "seed": 7, "torch_threads": 4},
+                )
 
     def test_latest_checkpoint_uses_generation_number(self):
         from training.run_ledger import latest_checkpoint

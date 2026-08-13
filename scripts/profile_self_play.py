@@ -118,7 +118,12 @@ def run_workload(
     device: str | torch.device = "cpu", mixed_precision: bool = False,
     collect_metrics: bool = False,
     use_native_search: bool | None = None,
+    torch_threads: int | None = None,
 ) -> dict:
+    if torch_threads is not None:
+        if torch_threads <= 0:
+            raise ValueError("torch_threads must be positive")
+        torch.set_num_threads(torch_threads)
     device = torch.device(device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
@@ -173,6 +178,7 @@ def run_workload(
         "channels": channels,
         "residual_blocks": residual_blocks,
         "device": str(device),
+        "torch_threads": torch.get_num_threads(),
         "precision": "float16" if evaluator.mixed_precision else "float32",
         "gpu_model": gpu_model,
         "gpu_vram_total_bytes": gpu_vram,
@@ -261,6 +267,7 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--mixed-precision", action="store_true")
     parser.add_argument("--python-search", action="store_true")
+    parser.add_argument("--torch-threads", type=int)
     parser.add_argument("--seed", type=int, default=51)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=5)
@@ -277,7 +284,10 @@ def main() -> None:
         args.board_size, args.walls, args.games, args.simulations, args.seed,
         args.channels, args.blocks, args.device, args.mixed_precision,
     )
-    workload_keywords = {"use_native_search": False} if args.python_search else {}
+    workload_keywords = {
+        "use_native_search": False if args.python_search else None,
+        "torch_threads": args.torch_threads,
+    }
     for index in range(args.warmups):
         run_workload(*workload, **workload_keywords)
         print(f"completed warmup {index + 1}/{args.warmups}", file=sys.stderr, flush=True)

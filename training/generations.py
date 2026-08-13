@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import random
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -54,6 +55,7 @@ class GenerationConfig:
     max_plies: int = 500
     seed: int = 1
     mixed_precision: bool = False
+    torch_threads: int | None = None
 
 
 class GenerationTrainer:
@@ -62,6 +64,10 @@ class GenerationTrainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.device = device
         self.rng = random.Random(config.seed)
+        if config.torch_threads is not None:
+            if config.torch_threads <= 0:
+                raise ValueError("torch_threads must be positive")
+            torch.set_num_threads(config.torch_threads)
         torch.manual_seed(config.seed)
         self.champion = self._new_model()
         self.generation = 0
@@ -110,16 +116,25 @@ class GenerationTrainer:
         return len(result.examples), result.game_lengths
 
     def run_generation(self) -> dict:
+        generation_started = time.perf_counter()
+        phase_started = generation_started
         added, game_lengths = self._self_play()
+        self_play_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         candidate = copy.deepcopy(self.champion)
         initial_candidate_sha256 = model_sha256(candidate)
         learner = Learner(candidate, learning_rate=self.config.learning_rate, device=self.device)
+        candidate_setup_seconds = time.perf_counter() - phase_started
         metrics = []
+        phase_started = time.perf_counter()
         for _ in range(self.config.training_steps):
             metrics.append(
                 learner.train_batch(self.replay.sample(min(self.config.batch_size, len(self.replay))))
             )
+        training_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         trained_candidate_sha256 = model_sha256(candidate)
+        candidate_hash_seconds = time.perf_counter() - phase_started
         arena = Arena(
             simulations=self.config.simulations,
             board_size=self.config.board_size,
@@ -127,6 +142,7 @@ class GenerationTrainer:
             max_plies=self.config.max_plies,
             rng=random.Random(self.rng.getrandbits(64)),
         )
+        phase_started = time.perf_counter()
         result: ArenaResult = arena.play_match(
             NeuralEvaluator(
                 candidate,
@@ -140,12 +156,15 @@ class GenerationTrainer:
             ),
             self.config.arena_games,
         )
+        arena_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
         promoted = result.candidate_score >= self.config.promotion_score
         if promoted:
             self.champion = candidate
             optimizer = learner.optimizer
         else:
             optimizer = Learner(self.champion, learning_rate=self.config.learning_rate, device=self.device).optimizer
+        promotion_seconds = time.perf_counter() - phase_started
         self.generation += 1
         summary = {
             "generation": self.generation,
@@ -162,8 +181,15 @@ class GenerationTrainer:
             "initial_candidate_sha256": initial_candidate_sha256,
             "trained_candidate_sha256": trained_candidate_sha256,
             **self._last_inference_metrics,
+            "self_play_seconds": self_play_seconds,
+            "candidate_setup_seconds": candidate_setup_seconds,
+            "training_seconds": training_seconds,
+            "candidate_hash_seconds": candidate_hash_seconds,
+            "arena_seconds": arena_seconds,
+            "promotion_seconds": promotion_seconds,
         }
         path = self.checkpoint_dir / f"generation_{self.generation:03d}.pt"
+        phase_started = time.perf_counter()
         save_checkpoint(
             path,
             self.champion,
@@ -180,4 +206,17 @@ class GenerationTrainer:
         )
         summary["checkpoint"] = str(path)
         summary["checkpoint_sha256"] = file_sha256(path)
+        checkpoint_seconds = time.perf_counter() - phase_started
+        generation_seconds = time.perf_counter() - generation_started
+        summary["checkpoint_seconds"] = checkpoint_seconds
+        summary["generation_seconds"] = generation_seconds
+        summary["generation_overhead_seconds"] = generation_seconds - (
+            self_play_seconds
+            + candidate_setup_seconds
+            + training_seconds
+            + candidate_hash_seconds
+            + arena_seconds
+            + promotion_seconds
+            + checkpoint_seconds
+        )
         return summary
