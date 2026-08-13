@@ -3,6 +3,10 @@ name = "barricade-zero"
 version = "0.1.0"
 description = "Tested Barricade/Quoridor engine and AlphaZero foundations"
 requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "torch>=2.6",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

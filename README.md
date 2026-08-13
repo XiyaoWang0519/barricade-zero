@@ -16,6 +16,15 @@ Implemented:
 - Random and shortest-path baseline agents
 - Reference PUCT MCTS with root noise and temperature control
 - Canonical self-play trajectory generation `(state, MCTS policy, outcome)`
+- Configurable residual policy-value network and AdamW learner
+- Replay buffer and executable 5x5 end-to-end training smoke cycle
+
+Create the training environment:
+
+```bash
+python3 -m venv .venv
+uv pip install --python .venv/bin/python -e .
+```
 
 Run the tests:
 
@@ -27,6 +36,13 @@ Run the random-game stress test:
 
 ```bash
 python3 scripts/stress_random_games.py --games 1000
+```
+
+Run a tiny CPU training cycle:
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=. python scripts/train_smoke.py
 ```
 
 The next milestone is a small PyTorch policy-value network and replay learner on the 5x5 configuration before scaling to 9x9. The reference MCTS is intentionally readable Python; production self-play will later need batching and a compiled search path.
