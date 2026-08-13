@@ -6,6 +6,8 @@ import ctypes
 from pathlib import Path
 from typing import Protocol
 
+import numpy as np
+
 from .state import GameState
 
 
@@ -37,6 +39,11 @@ class PythonRulesBackend:
 
         return encode_state(state)
 
+    def encode_batch(self, states: list[GameState]) -> np.ndarray:
+        return np.ascontiguousarray(
+            [self.encode_state(state) for state in states], dtype=np.float32
+        )
+
 
 def _wall_mask(walls: frozenset[tuple[int, int]], size: int) -> int:
     width = size - 1
@@ -65,6 +72,11 @@ class NativeRulesBackend:
             ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int,
         ]
         self.library.bz_encode_state.restype = ctypes.c_int
+        self.library.bz_encode_state_f32.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_uint64,
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+        ]
+        self.library.bz_encode_state_f32.restype = ctypes.c_int
 
     @staticmethod
     def _arguments(state: GameState) -> tuple[int, int, int, int, int]:
@@ -115,6 +127,23 @@ class NativeRulesBackend:
              for row in range(size)]
             for plane in range(8)
         ]
+
+    def encode_batch(self, states: list[GameState]) -> np.ndarray:
+        if not states:
+            return np.empty((0, 8, 0, 0), dtype=np.float32)
+        size = states[0].size
+        if any(state.size != size for state in states):
+            raise ValueError("all states in an encoding batch must share board size")
+        output = np.empty((len(states), 8, size, size), dtype=np.float32)
+        per_state = 8 * size * size
+        for index, state in enumerate(states):
+            pointer = output[index].ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            count = self.library.bz_encode_state_f32(
+                *self._arguments(state), *state.walls_remaining, pointer, per_state
+            )
+            if count != per_state:
+                raise RuntimeError(f"native encoder returned {count}, expected {per_state}")
+        return output
 
 
 def load_rules_backend(prefer_native: bool = True) -> RulesBackend:

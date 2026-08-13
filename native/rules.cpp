@@ -79,7 +79,8 @@ struct Board {
         }
         std::sort(out.begin(), out.end());
     }
-    void distance_plane(int player, double* output) const {
+    template <typename T>
+    void distance_plane(int player, T* output) const {
         int cells = n * n;
         std::vector<int> distance(cells, -1);
         std::deque<int> queue;
@@ -104,7 +105,7 @@ struct Board {
                 }
             }
         }
-        double scale = std::max(1, cells - 1);
+        T scale = static_cast<T>(std::max(1, cells - 1));
         for (int cell = 0; cell < cells; ++cell)
             output[cell] = std::max(0, distance[cell]) / scale;
     }
@@ -155,6 +156,29 @@ extern "C" int bz_encode_state(int n, int p0, int p1, uint64_t h, uint64_t v,
             if (v & bit) output[3 * cells + row * n + col] = 1.0;
         }
     double max_walls = std::max(1, std::max(w0, w1));
+    std::fill(output + 4 * cells, output + 5 * cells, w0 / max_walls);
+    std::fill(output + 5 * cells, output + 6 * cells, w1 / max_walls);
+    Board board{n, {p0,p1}, {w0,w1}, 0, -1, h, v};
+    board.distance_plane(0, output + 6 * cells);
+    board.distance_plane(1, output + 7 * cells);
+    return 8 * cells;
+}
+
+extern "C" int bz_encode_state_f32(int n, int p0, int p1, uint64_t h, uint64_t v,
+                                    int w0, int w1, float* output, int capacity) {
+    int cells = n * n;
+    if (capacity < 8 * cells) return -8 * cells;
+    std::fill(output, output + 8 * cells, 0.0f);
+    output[p0] = 1.0f;
+    output[cells + p1] = 1.0f;
+    int width = n - 1;
+    for (int row = 0; row < width; ++row)
+        for (int col = 0; col < width; ++col) {
+            uint64_t bit = uint64_t{1} << (row * width + col);
+            if (h & bit) output[2 * cells + row * n + col] = 1.0f;
+            if (v & bit) output[3 * cells + row * n + col] = 1.0f;
+        }
+    float max_walls = static_cast<float>(std::max(1, std::max(w0, w1)));
     std::fill(output + 4 * cells, output + 5 * cells, w0 / max_walls);
     std::fill(output + 5 * cells, output + 6 * cells, w1 / max_walls);
     Board board{n, {p0,p1}, {w0,w1}, 0, -1, h, v};

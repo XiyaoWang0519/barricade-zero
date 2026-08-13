@@ -18,16 +18,18 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | bitset edges + candidate-wall BFS | 17.52 | 29.23 |
 | C++ rules + known-legal state transition | 1.87 | 274.07 |
 | C++ rules + C++ 8-plane encoding | 0.876 | 584.51 |
+| contiguous float32 batch encoding, 128 games | 30.78 | 1121.20 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
 the Python reference, including both BFS distance planes.
 
-At 128 concurrent 9x9 games, average inference batch size reaches 86.1 and
-throughput reaches about 967 evaluated positions/s. The remaining profile is
-still dominated by Python/ctypes marshalling, policy rotation, legal-action
-object creation, and PUCT selection rather than the PyTorch forward itself.
-The next optimization is a contiguous native batch-encoding buffer.
+At 128 concurrent 9x9 games, average inference batch size reaches 86.1.
+Contiguous native `float32[N,8,S,S]` encoding plus `torch.from_numpy` raises
+throughput from about 967 to 1,121 evaluated positions/s and reduces wall time
+from 35.68 to 30.78 seconds. The CPU tensor shares the NumPy buffer without a
+copy. The remaining profile is dominated by legal-action object creation,
+policy rotation, PUCT selection, and Python tree traversal.
 
 ## Native extension boundary
 
@@ -47,7 +49,8 @@ is absent. Build it with `python scripts/build_native.py`.
 ## GPU gate
 
 Do not rent a GPU while rules/search dominate. Re-profile after native rules.
-The batch-size half of the GPU gate is now satisfied: 128 concurrent games
-produce an average batch of 86.1. GPU rental should begin after contiguous
-batch encoding removes Python float/list marshalling and a clean wall-clock
-profile confirms that model forward is the sustained dominant cost.
+The batch-size half of the GPU gate is satisfied: 128 concurrent games produce
+an average batch of 86.1. However, model forward is only about 4.14 of 30.78
+seconds (roughly 13%) in the measured workload. GPU rental should wait until
+batched/native legal-action generation and tree-search work make model forward
+the sustained dominant cost.

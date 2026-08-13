@@ -27,6 +27,13 @@ class NeuralEvaluator:
     def average_batch_size(self) -> float:
         return self.positions_evaluated / self.forward_calls if self.forward_calls else 0.0
 
+    def encode_inputs(self, states: list[GameState]):
+        array = self.encoding_backend.encode_batch(states)
+        tensor = torch.from_numpy(array)
+        if self.device.type != "cpu":
+            tensor = tensor.to(self.device)
+        return array, tensor
+
     @torch.inference_mode()
     def evaluate_batch(
         self, states: list[GameState], mask_legal: bool = True
@@ -34,11 +41,7 @@ class NeuralEvaluator:
         if not states:
             return []
         canonicals = [state.canonical() for state in states]
-        inputs = torch.tensor(
-            [self.encoding_backend.encode_state(state) for state in canonicals],
-            dtype=torch.float32,
-            device=self.device,
-        )
+        _array, inputs = self.encode_inputs(canonicals)
         self.model.eval()
         logits, values = self.model(inputs)
         if mask_legal:

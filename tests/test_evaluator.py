@@ -96,6 +96,16 @@ class NeuralEvaluatorTests(unittest.TestCase):
         ).evaluate_batch(states, mask_legal=False)
         self.assertEqual(python_result, native_result)
 
+    def test_cpu_input_tensor_shares_native_batch_buffer(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        evaluator = NeuralEvaluator(PolicyValueNetwork(5, channels=8, residual_blocks=1))
+        states = [GameState.initial(size=5, walls_per_player=2)] * 2
+        array, tensor = evaluator.encode_inputs(states)
+        self.assertEqual(tensor.data_ptr(), array.ctypes.data)
+        self.assertEqual(tuple(tensor.shape), (2, 8, 5, 5))
+
 
 if __name__ == "__main__":
     unittest.main()

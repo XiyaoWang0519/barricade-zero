@@ -4,6 +4,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from barricade.backend import PythonRulesBackend, load_rules_backend
 from barricade.encoding import encode_state
 from barricade.state import GameState
@@ -86,6 +88,25 @@ class RulesBackendTests(unittest.TestCase):
                 if not actions or state.is_terminal():
                     break
                 state = state.apply_action(rng.choice(actions))
+
+    def test_native_batch_encoding_is_contiguous_float32_and_matches_reference(self):
+        from barricade.backend import NativeRulesBackend
+
+        states = [GameState.initial(size=9, walls_per_player=10)]
+        states.append(states[0].apply_action(states[0].legal_actions()[0]).canonical())
+        encoded = NativeRulesBackend().encode_batch(states)
+        self.assertEqual(encoded.shape, (2, 8, 9, 9))
+        self.assertEqual(encoded.dtype, np.float32)
+        self.assertTrue(encoded.flags.c_contiguous)
+        expected = np.asarray([encode_state(state) for state in states], dtype=np.float32)
+        np.testing.assert_array_equal(encoded, expected)
+
+    def test_python_batch_encoding_has_same_contract(self):
+        states = [GameState.initial(size=5, walls_per_player=4)] * 2
+        encoded = PythonRulesBackend().encode_batch(states)
+        self.assertEqual(encoded.shape, (2, 8, 5, 5))
+        self.assertEqual(encoded.dtype, np.float32)
+        self.assertTrue(encoded.flags.c_contiguous)
 
 
 if __name__ == "__main__":
