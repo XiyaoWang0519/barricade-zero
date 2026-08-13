@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from functools import lru_cache
 from typing import Sequence
 
 from .actions import rotate_action
@@ -59,10 +60,14 @@ def legal_action_mask(state: GameState) -> list[bool]:
     return mask
 
 
+@lru_cache(maxsize=None)
+def policy_rotation_indices(size: int) -> tuple[int, ...]:
+    action_size = 8 + 2 * (size - 1) ** 2
+    # Rotation is an involution, so destination -> source uses the same map.
+    return tuple(rotate_action(action, size) for action in range(action_size))
+
+
 def rotate_policy(policy: Sequence[float], size: int) -> list[float]:
     if len(policy) != 8 + 2 * (size - 1) ** 2:
         raise ValueError("policy length does not match board size")
-    rotated = [0.0] * len(policy)
-    for action, value in enumerate(policy):
-        rotated[rotate_action(action, size)] = value
-    return rotated
+    return [policy[source] for source in policy_rotation_indices(size)]

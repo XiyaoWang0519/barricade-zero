@@ -1,7 +1,12 @@
 import unittest
 
 from barricade.actions import encode_wall_action, rotate_action
-from barricade.encoding import encode_state, legal_action_mask, rotate_policy
+from barricade.encoding import (
+    encode_state,
+    legal_action_mask,
+    policy_rotation_indices,
+    rotate_policy,
+)
 from barricade.state import GameState
 
 
@@ -43,6 +48,13 @@ class NeuralEncodingTests(unittest.TestCase):
         self.assertEqual(restored, policy)
         for action, value in enumerate(policy):
             self.assertEqual(rotated[rotate_action(action, 9)], value)
+
+    def test_cached_policy_rotation_indices_match_action_rotation(self):
+        indices = policy_rotation_indices(9)
+        self.assertEqual(len(indices), 136)
+        self.assertIs(indices, policy_rotation_indices(9))
+        for destination, source in enumerate(indices):
+            self.assertEqual(source, rotate_action(destination, 9))
 
 
 if __name__ == "__main__":

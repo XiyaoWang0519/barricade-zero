@@ -20,6 +20,7 @@ Fixed workload: 4 games, 4 simulations, 10 walls per player, seed 51.
 | C++ rules + C++ 8-plane encoding | 0.876 | 584.51 |
 | contiguous float32 batch encoding, 128 games | 30.78 | 1121.20 |
 | native CSR legal-action batches, 128 games | 28.77 | 1199.67 |
+| cached policy rotation permutation, 128 games | 25.14 | 1373.08 |
 
 The current small-batch implementation is 67.0x faster than the original
 measured path. Native encoding is differential-tested plane-by-plane against
@@ -37,6 +38,10 @@ The CSR boundary uses contiguous `int32` offsets/actions and converts NumPy
 scalars to built-in Python integers before they enter tree/domain state. This
 conversion is required: allowing `np.int32` wall coordinates into `GameState`
 causes fixed-width bit-shift overflow in the Python fallback.
+
+Caching the involutive action permutation removes repeated per-policy action
+decoding and lowers the same workload from 28.77 to 25.14 seconds. Policy
+rotation no longer appears among the leading cumulative-time functions.
 
 ## Native extension boundary
 
@@ -59,6 +64,7 @@ Do not rent a GPU while rules/search dominate. Re-profile after native rules.
 The batch-size half of the GPU gate is satisfied: 128 concurrent games produce
 an average batch of 86.1. However, model forward is only about 4.14 of 30.78
 seconds in the pre-CSR workload and about 2.47 of 28.77 seconds after CSR
-batching. GPU rental should wait until
+batching. After cached rotation, model forward remains about 2.48 of 25.14
+seconds (roughly 10%). GPU rental should wait until
 batched/native legal-action generation and tree-search work make model forward
 the sustained dominant cost.

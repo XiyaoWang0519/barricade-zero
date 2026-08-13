@@ -31,6 +31,7 @@ Implemented:
 - Differential-tested native 8-plane encoder including BFS distance features
 - Contiguous native float32 batch encoding with zero-copy CPU tensors
 - Native CSR legal-action batching with strict NumPy/Python scalar boundaries
+- Cached involutive policy/action rotation permutations
 
 Create the training environment:
 
