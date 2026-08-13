@@ -10,9 +10,7 @@ from pathlib import Path
 import torch
 
 from barricade.arena import Arena, ArenaResult
-from barricade.mcts import MCTS
-from barricade.self_play import play_self_play_game
-from barricade.state import GameState
+from barricade.concurrent_self_play import play_concurrent_games
 from neural.evaluator import NeuralEvaluator
 from neural.model import PolicyValueNetwork
 from .checkpoint import load_checkpoint, save_checkpoint
@@ -59,24 +57,23 @@ class GenerationTrainer:
 
     def _self_play(self) -> tuple[int, list[int]]:
         evaluator = NeuralEvaluator(self.champion, self.device)
-        game_lengths = []
-        added = 0
-        for _ in range(self.config.self_play_games):
-            search = MCTS(
-                evaluator,
-                simulations=self.config.simulations,
-                rng=random.Random(self.rng.getrandbits(64)),
-            )
-            examples = play_self_play_game(
-                GameState.initial(self.config.board_size, self.config.walls_per_player),
-                search,
-                rng=random.Random(self.rng.getrandbits(64)),
-                max_plies=self.config.max_plies,
-            )
-            self.replay.extend(examples)
-            added += len(examples)
-            game_lengths.append(len(examples))
-        return added, game_lengths
+        result = play_concurrent_games(
+            evaluator,
+            games=self.config.self_play_games,
+            simulations=self.config.simulations,
+            board_size=self.config.board_size,
+            walls_per_player=self.config.walls_per_player,
+            rng=random.Random(self.rng.getrandbits(64)),
+            max_plies=self.config.max_plies,
+        )
+        self.replay.extend(result.examples)
+        self._last_inference_metrics = {
+            "inference_forward_calls": result.forward_calls,
+            "positions_evaluated": result.positions_evaluated,
+            "average_inference_batch_size": result.average_inference_batch_size,
+            "self_play_draws": result.draws,
+        }
+        return len(result.examples), result.game_lengths
 
     def run_generation(self) -> dict:
         added, game_lengths = self._self_play()
@@ -118,6 +115,7 @@ class GenerationTrainer:
             "draws": result.draws,
             "candidate_score": result.candidate_score,
             "promoted": promoted,
+            **self._last_inference_metrics,
         }
         path = self.checkpoint_dir / f"generation_{self.generation:03d}.pt"
         save_checkpoint(

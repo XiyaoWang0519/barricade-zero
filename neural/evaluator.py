@@ -13,16 +13,35 @@ class NeuralEvaluator:
     def __init__(self, model: torch.nn.Module, device: str | torch.device = "cpu") -> None:
         self.device = torch.device(device)
         self.model = model.to(self.device)
+        self.forward_calls = 0
+        self.positions_evaluated = 0
+
+    @property
+    def average_batch_size(self) -> float:
+        return self.positions_evaluated / self.forward_calls if self.forward_calls else 0.0
 
     @torch.inference_mode()
-    def evaluate(self, state: GameState) -> tuple[list[float], float]:
-        canonical = state.canonical()
-        inputs = torch.tensor([encode_state(canonical)], dtype=torch.float32, device=self.device)
-        logits, value = self.model(inputs)
-        canonical_mask = torch.tensor(
-            [legal_action_mask(canonical)], dtype=torch.bool, device=self.device
+    def evaluate_batch(self, states: list[GameState]) -> list[tuple[list[float], float]]:
+        if not states:
+            return []
+        canonicals = [state.canonical() for state in states]
+        inputs = torch.tensor(
+            [encode_state(state) for state in canonicals], dtype=torch.float32, device=self.device
         )
-        policy = masked_softmax(logits, canonical_mask)[0].cpu().tolist()
-        if state.turn == 1:
-            policy = rotate_policy(policy, state.size)
-        return policy, float(value[0, 0].cpu())
+        masks = torch.tensor(
+            [legal_action_mask(state) for state in canonicals], dtype=torch.bool, device=self.device
+        )
+        self.model.eval()
+        logits, values = self.model(inputs)
+        policies = masked_softmax(logits, masks).cpu().tolist()
+        self.forward_calls += 1
+        self.positions_evaluated += len(states)
+        results = []
+        for original, policy, value in zip(states, policies, values[:, 0].cpu().tolist()):
+            if original.turn == 1:
+                policy = rotate_policy(policy, original.size)
+            results.append((policy, float(value)))
+        return results
+
+    def evaluate(self, state: GameState) -> tuple[list[float], float]:
+        return self.evaluate_batch([state])[0]

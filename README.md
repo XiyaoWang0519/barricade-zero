@@ -21,6 +21,8 @@ Implemented:
 - Neural-network-guided self-play generations
 - Balanced deterministic checkpoint arena and promotion threshold
 - Atomic generation checkpoints with resume support
+- Wave-batched MCTS across concurrent self-play games
+- Inference batching metrics and sequential-vs-batched benchmark
 
 Create the training environment:
 
@@ -62,4 +64,10 @@ PYTHONPATH=. python scripts/train_generations.py \
   --resume checkpoints/generations/generation_001.pt
 ```
 
-The next milestone is batched neural inference across concurrent 5x5 games, followed by stronger checkpoint tournaments. The reference MCTS is intentionally readable Python; production self-play will later need batching and a compiled search path.
+Benchmark sequential versus batched inference:
+
+```bash
+PYTHONPATH=. python scripts/benchmark_batching.py --games 8 --simulations 16
+```
+
+The next milestone is persistent MCTS tree reuse, larger concurrent game pools, and stronger checkpoint tournaments. The reference search is intentionally readable Python; production 9x9 self-play will later need a compiled search path.
