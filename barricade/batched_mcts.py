@@ -10,6 +10,7 @@ from collections.abc import Iterator
 import numpy as np
 
 from .mcts import Node, SearchResult
+from .noise import segmented_dirichlet_noise
 from .backend import load_rules_backend
 from .state import GameState
 
@@ -187,15 +188,12 @@ class BatchedMCTS:
         values = [value for _policy, value in evaluations]
         return policies, values, None
 
-    def _add_noise(self, root: Node) -> None:
+    def _add_noise(self, root: Node, samples) -> None:
         edges: CompactEdges = root.edges
-        actions = edges.actions
-        samples = [self.rng.gammavariate(self.dirichlet_alpha, 1.0) for _ in actions]
-        total = sum(samples)
         for index, sample in enumerate(samples):
             edges.priors[index] = (
                 (1 - self.noise_fraction) * edges.priors[index]
-                + self.noise_fraction * sample / total
+                + self.noise_fraction * float(sample)
             )
 
     def _select_index(self, node: Node) -> int:
@@ -311,8 +309,14 @@ class BatchedMCTS:
             raise ValueError("search roots must be non-terminal")
         self._ensure_expanded(roots)
         if add_noise:
-            for root in roots:
-                self._add_noise(root)
+            lengths = [len(root.edges) for root in roots]
+            noise = segmented_dirichlet_noise(
+                self.rng, lengths, self.dirichlet_alpha
+            )
+            offset = 0
+            for root, length in zip(roots, lengths):
+                self._add_noise(root, noise[offset:offset + length])
+                offset += length
 
         for _ in range(self.simulations):
             pending = [self._descend(root) for root in roots]

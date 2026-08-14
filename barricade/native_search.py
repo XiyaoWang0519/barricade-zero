@@ -11,6 +11,7 @@ import numpy as np
 
 from .backend import NativeRulesBackend
 from .mcts import SearchResult
+from .noise import segmented_dirichlet_noise
 from .state import GameState
 
 
@@ -279,12 +280,7 @@ class NativeSearchSession:
         self._record_boundary(started)
         if count < 0:
             raise RuntimeError(f"native root-action buffer requires {-count} entries")
-        noise = np.empty(count, dtype=np.float64)
-        for root_index in range(len(root_ids)):
-            begin, end = int(offsets[root_index]), int(offsets[root_index + 1])
-            samples = [rng.gammavariate(alpha, 1.0) for _ in range(end - begin)]
-            total = sum(samples)
-            noise[begin:end] = [sample / total for sample in samples]
+        noise = segmented_dirichlet_noise(rng, np.diff(offsets), alpha)
         started = time.perf_counter()
         result = self.library.bz_search_add_noise(
             self.handle,

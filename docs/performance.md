@@ -499,3 +499,151 @@ profiles/native-generation-cpu-4t.prof
 profiles/native-generation-native-batch-cpu-4t.json
 profiles/native-generation-native-batch-cpu-4t.prof
 ```
+
+## RTX 4090 final CUDA series, 2026-08-14
+
+The final native-search code and the retained CUDA changes were measured on a
+RunPod RTX 4090 (24 GB), driver 570.195.03, CUDA 12.4, PyTorch 2.4.1+cu124, and
+Python 3.11.10. The fixed primary configuration remained 9x9, 10 walls per
+player, 128 concurrent games, 8 simulations, 64 channels, and 6 residual
+blocks. Every point used one warm-up followed by five measured repetitions; a
+separate sixth run produced each cProfile. A 1/2/4/8/16 PyTorch thread sweep
+showed no material scaling and selected one thread, which was marginally best.
+
+All 113 tests passed on the GPU, including CPU/CUDA prediction agreement,
+mixed-precision transfer behavior, checkpoint portability, the new bucketed
+CUDA Graph path, and native/Python search differentials. Locally, 109 tests pass
+and the four CUDA-only tests skip cleanly. The temporary Pod and restricted API
+key were deleted after downloading and hash-verifying all 39 JSON/cProfile
+artifacts. The balance changed from $19.21 to $18.82, so the measured GPU run
+cost $0.39.
+
+### Retained CUDA Graph inference
+
+`NeuralEvaluator` can now capture eager inference into power-of-two batch
+buckets. The model weights and one static input/output allocation per bucket
+stay resident; each inference copies the real batch into the smallest bucket,
+zeros padding, replays the graph, and slices the real outputs. This removes
+hundreds of Python/kernel-launch sequences without compiling the model. It is
+explicit and default-off: `--cuda-graphs` requires a CUDA device. The self-play
+evaluator is cached while the champion is unchanged, and new captures are made
+after promotion. Arena evaluators use a batch-one graph. Older run manifests
+remain compatible when the new setting is left disabled.
+
+The profile harness reports graph/model setup separately from timed self-play.
+For the primary graph run, median setup was 0.263 seconds, peak allocated VRAM
+was 277 MB, and peak reserved VRAM was 753 MB. This is only about 3.1% of the
+4090's memory. The matched final comparison is:
+
+| metric | eager CUDA FP16 | bucketed CUDA Graph FP16 | change |
+|---|---:|---:|---:|
+| self-play seconds median | 1.887 | 1.103 | 1.710x faster (-41.5%) |
+| population stddev | 0.045 | 0.028 | -38.3% |
+| model-forward seconds median | 1.092 | 0.296 | -72.9% |
+| non-model seconds median | 0.813 | 0.809 | unchanged |
+| positions/s median | 21,247.30 | 36,379.88 | +71.2% |
+| examples/s median | 2,680.89 | 4,590.54 | +71.2% |
+
+Power-of-two padding can select a different valid FP16 convolution kernel than
+an exact-sized eager batch. The randomized numerical gate measured maximum
+absolute differences of 0.00245 in logits and 0.00049 in values, and the CUDA
+test checks normalized finite predictions within mixed-precision tolerance.
+Consequently, the fixed seed produced 40,087 positions/5,058 examples on eager
+and 40,132/5,064 with graphs. Wall time above is a same-configuration result,
+while positions/s and examples/s are the work-normalized comparisons.
+
+Reproduce the retained path with:
+
+```bash
+PYTHONPATH=. python scripts/profile_self_play.py \
+  --board-size 9 --walls 10 --games 128 --simulations 8 \
+  --channels 64 --blocks 6 --device cuda --mixed-precision \
+  --cuda-graphs --torch-threads 1 --warmups 1 --repetitions 5 \
+  --json-output profiles/final-cudagraph-rtx4090.json \
+  --profile profiles/final-cudagraph-rtx4090.prof
+```
+
+### Vectorized root exploration noise
+
+Once graph replay removed model-launch overhead, 170,772 calls to Python's
+`random.gammavariate` consumed about 0.20 seconds in the profile. Native and
+Python batched MCTS now share one segmented Dirichlet helper. It seeds a NumPy
+generator from the supplied `random.Random`, samples every root's gamma values
+in one vectorized call, and normalizes segments independently. The result is
+positive, normalized, deterministic, and identical across the native and
+Python search paths, although it intentionally changes the historical seeded
+trajectory because it consumes the RNG differently. In the final graph profile
+the noise helper falls out of the leading functions; despite executing 67
+search moves instead of 54, profiled self-play fell from 1.473 to 1.374 seconds.
+
+### RTX 4090 concurrency scaling
+
+| games | seconds median (sigma) | positions/s | examples/s | average batch | median batch | peak reserved VRAM | draws |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 0.315 (0.004) | 15,778.81 | 1,980.70 | 13.13 | 16 | 642 MiB | 14 |
+| 32 | 0.439 (0.007) | 22,048.94 | 2,792.56 | 22.78 | 32 | 670 MiB | 25 |
+| 64 | 0.651 (0.011) | 29,981.34 | 3,769.75 | 41.26 | 59 | 694 MiB | 55 |
+| 128 | 1.103 (0.028) | 36,379.88 | 4,590.54 | 74.73 | 98 | 718 MiB | 104 |
+| 256 | 1.893 (0.024) | 41,466.27 | 5,241.74 | 160.15 | 234 | 764 MiB | 203 |
+
+The 256-game point maximizes throughput, 14.0% above 128 games, while the
+unchanged 128-game primary offers lower latency. Compared with the final
+four-thread local result, the retained 128-game CUDA path is about 9.5x faster
+in wall time and positions/s.
+
+### Complete generation on the RTX 4090
+
+The generation comparison includes graph capture, self-play, four real
+optimizer steps at batch 128, a two-game arena, promotion, and checkpointing.
+Both variants promoted the candidate in all five measured runs.
+
+| metric | eager CUDA FP16 | CUDA Graph FP16 | change |
+|---|---:|---:|---:|
+| generation seconds median | 3.046 | 2.063 | 1.476x faster (-32.3%) |
+| population stddev | 0.040 | 0.019 | -52.6% |
+| self-play seconds median | 1.712 | 1.374 | -19.7% |
+| training seconds median | 0.052 | 0.054 | unchanged |
+| arena seconds median | 1.051 | 0.395 | -62.5% |
+| checkpoint seconds median | 0.215 | 0.216 | unchanged |
+| positions/generation-second | 13,065.17 | 19,316.01 | +47.8% |
+| examples/generation-second | 1,646.89 | 2,434.98 | +47.9% |
+
+The graph generation produced 39,854 self-play positions and 5,024 examples
+with an average inference batch of 93.33. At its median, self-play is 66.6% of
+generation time, arena 19.1%, checkpointing 10.5%, and training 2.6%. Graph
+capture is included in the self-play and arena phases, so these are cold
+single-generation results; a retained champion reuses the self-play captures in
+later generations.
+
+### Rejected CUDA frontiers and stopping point
+
+| attempt | measured result | decision |
+|---|---|---|
+| H2D pinning/overlap | 433 transfers consumed only about 0.016 seconds per eager primary run | rejected as immaterial |
+| cuDNN autotune | 2.080 seconds versus 1.967 for the same prototype harness, with changed FP16 trajectories | rejected |
+| `torch.compile(mode="default", dynamic=True)` | 19.2-second setup, a 20.0-second first measured run, and 1.739-second steady median | rejected |
+| `torch.compile(mode="reduce-overhead", dynamic=True)` | 17.0-second setup plus 24.4/5.2-second first two runs before a 1.248-second steady median | rejected; graph recapture and candidate churn dominate |
+| direct low-level graph capture | less reserved memory but slower/less stable than the documented context manager | rejected |
+| bucketed eager CUDA Graphs | 0.263-second setup and 1.103-second primary median | retained |
+
+After the retained graph and noise improvements, the separate profile is led by
+native leaf preparation (about 0.47 seconds) and synchronized graph inference
+(about 0.37 seconds). H2D transfer is negligible; traversal, expansion, root
+noise, canonicalization, and action selection are each much smaller. Further
+meaningful gains require a structural producer/inference pipeline or parallel
+native leaf preparation rather than another isolated Python/CUDA micro-change.
+The last low-risk capture and transfer experiments were neutral or worse, so
+this series stops at genuine diminishing returns.
+
+All raw reports and profiles are preserved locally under the ignored directory
+`runs/runpod-20260814-rtx4090-native/`. The authoritative final files are:
+
+```text
+final-eager-vector-noise-rtx4090.json
+final-cudagraph-vector-noise-rtx4090.json
+final-cudagraph-vector-noise-rtx4090.prof
+final-cudagraph-scaling-rtx4090-{16,32,64,256}.json
+final-eager-generation-vector-noise-rtx4090.json
+final-cudagraph-generation-vector-noise-rtx4090.json
+final-cudagraph-generation-vector-noise-rtx4090.prof
+```

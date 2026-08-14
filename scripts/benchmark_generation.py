@@ -101,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-plies", type=int, default=300)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--mixed-precision", action="store_true")
+    parser.add_argument("--cuda-graphs", action="store_true")
     parser.add_argument("--torch-threads", type=int)
     parser.add_argument("--seed", type=int, default=51)
     parser.add_argument("--warmups", type=int, default=1)
@@ -130,6 +131,7 @@ def config_from_args(args: argparse.Namespace) -> GenerationConfig:
         seed=args.seed,
         mixed_precision=args.mixed_precision,
         torch_threads=args.torch_threads,
+        cuda_graphs=args.cuda_graphs,
     )
 
 

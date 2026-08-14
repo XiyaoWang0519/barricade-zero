@@ -68,11 +68,13 @@ class ProfileSelfPlayTests(unittest.TestCase):
         self.assertEqual(summary["residual_blocks"], 1)
         self.assertEqual(summary["device"], "cpu")
         self.assertEqual(summary["precision"], "float32")
+        self.assertFalse(summary["cuda_graphs"])
         self.assertIsNone(summary["gpu_model"])
         self.assertEqual(summary["peak_gpu_allocated_bytes"], 0)
         self.assertEqual(summary["peak_gpu_reserved_bytes"], 0)
         self.assertEqual(summary["gpu_utilization_samples"], 0)
         self.assertGreaterEqual(summary["model_forward_seconds"], 0.0)
+        self.assertGreaterEqual(summary["setup_seconds"], 0.0)
         self.assertAlmostEqual(
             summary["non_model_seconds"],
             summary["seconds"] - summary["model_forward_seconds"],

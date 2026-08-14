@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--resume-latest", action="store_true")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--mixed-precision", action="store_true")
+    parser.add_argument("--cuda-graphs", action="store_true")
     parser.add_argument("--torch-threads", type=int)
     parser.add_argument("--seed", type=int, default=21)
     return parser
@@ -54,6 +55,7 @@ def config_from_args(args: argparse.Namespace) -> GenerationConfig:
         seed=args.seed,
         mixed_precision=args.mixed_precision,
         torch_threads=args.torch_threads,
+        cuda_graphs=args.cuda_graphs,
     )
 
 

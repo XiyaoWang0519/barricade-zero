@@ -192,11 +192,58 @@ class NeuralEvaluatorTests(unittest.TestCase):
         self.assertEqual(values.dtype, np.float32)
         self.assertGreaterEqual(evaluator.model_forward_seconds, 0.0)
 
+    def test_cuda_graphs_reject_a_cpu_device(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        with self.assertRaisesRegex(ValueError, "requires a CUDA device"):
+            NeuralEvaluator(
+                PolicyValueNetwork(5, channels=8, residual_blocks=1),
+                device="cpu",
+                cuda_graphs=True,
+            )
+
 
 @unittest.skipUnless(
     torch is not None and torch.cuda.is_available(), "CUDA is not available"
 )
 class NeuralEvaluatorCudaTests(unittest.TestCase):
+    def test_bucketed_cuda_graphs_preserve_shapes_and_close_predictions(self):
+        from neural.evaluator import NeuralEvaluator
+        from neural.model import PolicyValueNetwork
+
+        torch.manual_seed(402)
+        eager_model = PolicyValueNetwork(5, channels=8, residual_blocks=1)
+        graph_model = PolicyValueNetwork(5, channels=8, residual_blocks=1)
+        graph_model.load_state_dict(eager_model.state_dict())
+        states = [GameState.initial(size=5, walls_per_player=2)] * 3
+        eager_policies, eager_values = NeuralEvaluator(
+            eager_model, device="cuda", mixed_precision=True
+        ).evaluate_batch_arrays(states, mask_legal=False)
+        graph_evaluator = NeuralEvaluator(
+            graph_model,
+            device="cuda",
+            mixed_precision=True,
+            cuda_graphs=True,
+            cuda_graph_max_batch_size=3,
+        )
+        graph_policies, graph_values = graph_evaluator.evaluate_batch_arrays(
+            states, mask_legal=False
+        )
+
+        self.assertTrue(graph_evaluator.cuda_graphs)
+        self.assertEqual(graph_policies.shape, eager_policies.shape)
+        self.assertEqual(graph_values.shape, eager_values.shape)
+        np.testing.assert_allclose(
+            graph_policies, eager_policies, rtol=2e-2, atol=5e-4
+        )
+        np.testing.assert_allclose(
+            graph_values, eager_values, rtol=2e-2, atol=5e-4
+        )
+        np.testing.assert_allclose(
+            graph_policies.sum(axis=1), 1.0, rtol=1e-5, atol=1e-6
+        )
+
     def test_cpu_and_cuda_agree_on_masks_rotation_policy_and_value(self):
         from neural.evaluator import NeuralEvaluator
         from neural.model import PolicyValueNetwork

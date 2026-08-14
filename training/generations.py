@@ -56,6 +56,7 @@ class GenerationConfig:
     seed: int = 1
     mixed_precision: bool = False
     torch_threads: int | None = None
+    cuda_graphs: bool = False
 
 
 class GenerationTrainer:
@@ -64,6 +65,8 @@ class GenerationTrainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.device = device
         self.rng = random.Random(config.seed)
+        if config.cuda_graphs and torch.device(device).type != "cuda":
+            raise ValueError("CUDA Graph inference requires a CUDA training device")
         if config.torch_threads is not None:
             if config.torch_threads <= 0:
                 raise ValueError("torch_threads must be positive")
@@ -72,6 +75,7 @@ class GenerationTrainer:
         self.champion = self._new_model()
         self.generation = 0
         self.replay = ReplayBuffer(config.replay_capacity, self.rng)
+        self._self_play_evaluator: NeuralEvaluator | None = None
 
     def _new_model(self) -> PolicyValueNetwork:
         return PolicyValueNetwork(
@@ -89,13 +93,35 @@ class GenerationTrainer:
         rng_state = training_state.get("rng_state")
         if rng_state is not None:
             self.rng.setstate(rng_state)
+        self._self_play_evaluator = None
 
-    def _self_play(self) -> tuple[int, list[int]]:
-        evaluator = NeuralEvaluator(
-            self.champion,
+    def _evaluator(
+        self, model: torch.nn.Module, max_batch_size: int
+    ) -> NeuralEvaluator:
+        graph_options = (
+            {
+                "cuda_graphs": True,
+                "cuda_graph_max_batch_size": max_batch_size,
+            }
+            if self.config.cuda_graphs
+            else {}
+        )
+        return NeuralEvaluator(
+            model,
             self.device,
             mixed_precision=self.config.mixed_precision,
+            **graph_options,
         )
+
+    def _self_play(self) -> tuple[int, list[int]]:
+        if self.config.cuda_graphs:
+            if self._self_play_evaluator is None:
+                self._self_play_evaluator = self._evaluator(
+                    self.champion, self.config.self_play_games
+                )
+            evaluator = self._self_play_evaluator
+        else:
+            evaluator = self._evaluator(self.champion, self.config.self_play_games)
         result = play_concurrent_games(
             evaluator,
             games=self.config.self_play_games,
@@ -144,16 +170,8 @@ class GenerationTrainer:
         )
         phase_started = time.perf_counter()
         result: ArenaResult = arena.play_match(
-            NeuralEvaluator(
-                candidate,
-                self.device,
-                mixed_precision=self.config.mixed_precision,
-            ),
-            NeuralEvaluator(
-                self.champion,
-                self.device,
-                mixed_precision=self.config.mixed_precision,
-            ),
+            self._evaluator(candidate, 1),
+            self._evaluator(self.champion, 1),
             self.config.arena_games,
         )
         arena_seconds = time.perf_counter() - phase_started
@@ -161,6 +179,7 @@ class GenerationTrainer:
         promoted = result.candidate_score >= self.config.promotion_score
         if promoted:
             self.champion = candidate
+            self._self_play_evaluator = None
             optimizer = learner.optimizer
         else:
             optimizer = Learner(self.champion, learning_rate=self.config.learning_rate, device=self.device).optimizer

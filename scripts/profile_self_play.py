@@ -93,6 +93,7 @@ def summarize_runs(runs: list[dict]) -> dict:
         raise ValueError("at least one measured run is required")
     metrics = (
         "seconds",
+        "setup_seconds",
         "model_forward_seconds",
         "non_model_seconds",
         "positions_per_second",
@@ -119,6 +120,7 @@ def run_workload(
     collect_metrics: bool = False,
     use_native_search: bool | None = None,
     torch_threads: int | None = None,
+    cuda_graphs: bool = False,
 ) -> dict:
     if torch_threads is not None:
         if torch_threads <= 0:
@@ -127,6 +129,7 @@ def run_workload(
     device = torch.device(device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
+    setup_started = time.perf_counter()
     torch.manual_seed(seed)
     backend = load_rules_backend(collect_metrics=collect_metrics)
     evaluator = NeuralEvaluator(
@@ -134,7 +137,10 @@ def run_workload(
         device=device,
         encoding_backend=backend,
         mixed_precision=mixed_precision,
+        cuda_graphs=cuda_graphs,
+        cuda_graph_max_batch_size=games if cuda_graphs else None,
     )
+    setup_seconds = time.perf_counter() - setup_started
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
         torch.cuda.synchronize(device)
@@ -180,6 +186,7 @@ def run_workload(
         "device": str(device),
         "torch_threads": torch.get_num_threads(),
         "precision": "float16" if evaluator.mixed_precision else "float32",
+        "cuda_graphs": evaluator.cuda_graphs,
         "gpu_model": gpu_model,
         "gpu_vram_total_bytes": gpu_vram,
         "examples": len(result.examples),
@@ -187,6 +194,7 @@ def run_workload(
         "draws": result.draws,
         "wins": list(result.wins),
         "seconds": elapsed,
+        "setup_seconds": setup_seconds,
         "positions": result.positions_evaluated,
         "forward_calls": result.forward_calls,
         "average_batch_size": result.average_inference_batch_size,
@@ -266,6 +274,7 @@ def main() -> None:
     parser.add_argument("--blocks", type=int, default=2)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--mixed-precision", action="store_true")
+    parser.add_argument("--cuda-graphs", action="store_true")
     parser.add_argument("--python-search", action="store_true")
     parser.add_argument("--torch-threads", type=int)
     parser.add_argument("--seed", type=int, default=51)
@@ -287,6 +296,7 @@ def main() -> None:
     workload_keywords = {
         "use_native_search": False if args.python_search else None,
         "torch_threads": args.torch_threads,
+        "cuda_graphs": args.cuda_graphs,
     }
     for index in range(args.warmups):
         run_workload(*workload, **workload_keywords)

@@ -16,6 +16,7 @@ class TrainingRunTests(unittest.TestCase):
                 "--max-plies", "750",
                 "--promotion-score", "0.6",
                 "--torch-threads", "4",
+                "--cuda-graphs",
                 "--resume-latest",
             ]
         )
@@ -27,6 +28,7 @@ class TrainingRunTests(unittest.TestCase):
         self.assertEqual(config.max_plies, 750)
         self.assertEqual(config.promotion_score, 0.6)
         self.assertEqual(config.torch_threads, 4)
+        self.assertTrue(config.cuda_graphs)
         self.assertEqual(args.torch_threads, 4)
         self.assertTrue(args.resume_latest)
 
@@ -64,12 +66,28 @@ class TrainingRunTests(unittest.TestCase):
             RunLedger(directory, {"board_size": 9, "seed": 7})
             RunLedger(
                 directory,
-                {"board_size": 9, "seed": 7, "torch_threads": None},
+                {
+                    "board_size": 9,
+                    "seed": 7,
+                    "torch_threads": None,
+                    "cuda_graphs": False,
+                },
             )
             with self.assertRaisesRegex(ValueError, "configuration does not match"):
                 RunLedger(
                     directory,
                     {"board_size": 9, "seed": 7, "torch_threads": 4},
+                )
+
+    def test_run_ledger_rejects_enabling_new_optional_acceleration(self):
+        from training.run_ledger import RunLedger
+
+        with tempfile.TemporaryDirectory() as directory:
+            RunLedger(directory, {"board_size": 9, "seed": 7})
+            with self.assertRaisesRegex(ValueError, "configuration does not match"):
+                RunLedger(
+                    directory,
+                    {"board_size": 9, "seed": 7, "cuda_graphs": True},
                 )
 
     def test_latest_checkpoint_uses_generation_number(self):

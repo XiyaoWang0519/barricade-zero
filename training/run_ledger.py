@@ -11,7 +11,10 @@ from typing import Any, Mapping
 
 
 _CHECKPOINT_PATTERN = re.compile(r"generation_(\d+)\.pt$")
-_BACKWARD_COMPATIBLE_OPTIONAL_CONFIG = {"torch_threads": None}
+_BACKWARD_COMPATIBLE_OPTIONAL_CONFIG = {
+    "torch_threads": None,
+    "cuda_graphs": False,
+}
 
 
 def _timestamp() -> str:

@@ -14,6 +14,78 @@ from barricade.state import GameState
 from .model import masked_softmax
 
 
+class _BucketedCudaGraphModel(torch.nn.Module):
+    """Replay eager inference through power-of-two CUDA Graph buckets."""
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        device: torch.device,
+        mixed_precision: bool,
+        max_batch_size: int | None,
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.device = device
+        self.mixed_precision = mixed_precision
+        self.action_size = model.action_size
+        self.board_size = model.board_size
+        self._captures: dict[
+            int, tuple[torch.Tensor, torch.cuda.CUDAGraph, tuple[torch.Tensor, torch.Tensor]]
+        ] = {}
+        if max_batch_size is not None:
+            batch_size = 1
+            with torch.inference_mode():
+                while batch_size < max_batch_size:
+                    self._capture(batch_size)
+                    batch_size *= 2
+                self._capture(batch_size)
+            torch.cuda.synchronize(self.device)
+
+    def _autocast(self):
+        return (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self.mixed_precision
+            else nullcontext()
+        )
+
+    def _capture(self, batch_size: int) -> None:
+        if batch_size in self._captures:
+            return
+        static_inputs = torch.zeros(
+            batch_size,
+            8,
+            self.board_size,
+            self.board_size,
+            device=self.device,
+        )
+        current_stream = torch.cuda.current_stream(self.device)
+        warmup_stream = torch.cuda.Stream(device=self.device)
+        warmup_stream.wait_stream(current_stream)
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(3):
+                with self._autocast():
+                    self.model(static_inputs)
+        current_stream.wait_stream(warmup_stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            with self._autocast():
+                outputs = self.model(static_inputs)
+        self._captures[batch_size] = (static_inputs, graph, outputs)
+
+    def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        count = int(inputs.shape[0])
+        bucket = 1 if count == 1 else 1 << (count - 1).bit_length()
+        if bucket not in self._captures:
+            self._capture(bucket)
+        static_inputs, graph, outputs = self._captures[bucket]
+        static_inputs[:count].copy_(inputs)
+        if count < bucket:
+            static_inputs[count:].zero_()
+        graph.replay()
+        return outputs[0][:count], outputs[1][:count]
+
+
 class NeuralEvaluator:
     def __init__(
         self,
@@ -21,11 +93,28 @@ class NeuralEvaluator:
         device: str | torch.device = "cpu",
         encoding_backend=None,
         mixed_precision: bool = False,
+        cuda_graphs: bool = False,
+        cuda_graph_max_batch_size: int | None = None,
     ) -> None:
         self.device = torch.device(device)
-        self.model = model.to(self.device)
-        self.model.eval()
         self.mixed_precision = bool(mixed_precision) and self.device.type == "cuda"
+        if cuda_graphs and self.device.type != "cuda":
+            raise ValueError("CUDA Graph inference requires a CUDA device")
+        if cuda_graph_max_batch_size is not None and cuda_graph_max_batch_size <= 0:
+            raise ValueError("cuda_graph_max_batch_size must be positive")
+        base_model = model.to(self.device)
+        base_model.eval()
+        self.cuda_graphs = bool(cuda_graphs)
+        self.model = (
+            _BucketedCudaGraphModel(
+                base_model,
+                self.device,
+                self.mixed_precision,
+                cuda_graph_max_batch_size,
+            ).eval()
+            if self.cuda_graphs
+            else base_model
+        )
         self.forward_calls = 0
         self.positions_evaluated = 0
         self.batch_sizes: list[int] = []
