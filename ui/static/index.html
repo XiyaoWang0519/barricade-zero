@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Barricade Zero</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">BZ</span>
+        <div>
+          <h1>Barricade Zero</h1>
+          <p class="tag">Watch games and probe checkpoints</p>
+        </div>
+      </div>
+      <p class="status" id="status" role="status"></p>
+    </header>
+
+    <main class="layout">
+      <aside class="panel rail">
+        <section>
+          <h2>Setup</h2>
+          <div class="presets" role="group" aria-label="Board presets">
+            <button type="button" data-size="5" data-walls="2">5×5 lab</button>
+            <button type="button" data-size="9" data-walls="10">9×9 official</button>
+          </div>
+          <label>
+            Board size
+            <input id="board-size" type="number" min="3" max="9" step="2" value="5">
+          </label>
+          <label>
+            Walls each
+            <input id="walls" type="number" min="0" max="10" value="2">
+          </label>
+          <label>
+            MCTS simulations
+            <input id="simulations" type="number" min="1" max="400" value="32">
+          </label>
+          <label>
+            Seed
+            <input id="seed" type="number" value="1">
+          </label>
+        </section>
+
+        <section>
+          <h2>Players</h2>
+          <div class="player-setup" data-side="0">
+            <p class="player-label"><span class="swatch p0"></span> Player 0 · south</p>
+            <label>
+              Agent
+              <select id="p0-type"></select>
+            </label>
+            <label class="checkpoint-field">
+              Checkpoint
+              <select id="p0-checkpoint"></select>
+            </label>
+          </div>
+          <div class="player-setup" data-side="1">
+            <p class="player-label"><span class="swatch p1"></span> Player 1 · north</p>
+            <label>
+              Agent
+              <select id="p1-type"></select>
+            </label>
+            <label class="checkpoint-field">
+              Checkpoint
+              <select id="p1-checkpoint"></select>
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <h2>Checkpoints</h2>
+          <ul class="checkpoint-list" id="checkpoint-list"></ul>
+        </section>
+
+        <button type="button" class="primary" id="new-game">New game</button>
+      </aside>
+
+      <section class="table">
+        <div class="board-wrap">
+          <div id="board" class="board" aria-label="Barricade board"></div>
+        </div>
+        <div class="transport">
+          <button type="button" id="undo" title="Undo (U)">Undo</button>
+          <button type="button" id="step" class="primary" title="Play one agent move (Space)">Play move</button>
+          <button type="button" id="auto">Auto-play</button>
+          <button type="button" id="reset">Reset</button>
+          <label class="inline">
+            Speed
+            <select id="speed">
+              <option value="180">Fast</option>
+              <option value="500" selected>Normal</option>
+              <option value="1200">Slow</option>
+            </select>
+          </label>
+          <div class="orient" role="group" aria-label="Wall orientation">
+            <button type="button" id="orient-h" aria-pressed="true">H wall</button>
+            <button type="button" id="orient-v" aria-pressed="false">V wall</button>
+          </div>
+        </div>
+        <label class="scrub">
+          Ply
+          <input id="ply" type="range" min="0" max="0" value="0">
+          <span id="ply-label">0 / 0</span>
+        </label>
+      </section>
+
+      <aside class="panel detail">
+        <section class="matchup" id="matchup"></section>
+        <section>
+          <h2>Position</h2>
+          <dl class="facts" id="facts"></dl>
+        </section>
+        <section>
+          <h2>Inspect checkpoint</h2>
+          <label>
+            Network
+            <select id="inspect-checkpoint"></select>
+          </label>
+          <div class="row">
+            <button type="button" id="inspect-net">Policy / value</button>
+            <button type="button" id="inspect-mcts">MCTS probe</button>
+          </div>
+          <div id="analysis"></div>
+        </section>
+        <section>
+          <h2>History</h2>
+          <ol class="history" id="history"></ol>
+        </section>
+      </aside>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

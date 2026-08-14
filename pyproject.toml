@@ -9,7 +9,10 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["barricade*", "neural*", "training*"]
+include = ["barricade*", "neural*", "training*", "ui*"]
+
+[tool.setuptools.package-data]
+ui = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

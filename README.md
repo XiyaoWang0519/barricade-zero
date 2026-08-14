@@ -86,6 +86,15 @@ PYTHONPATH=. python scripts/train_generations.py \
   --resume checkpoints/generations/generation_001.pt
 ```
 
+Launch the gameplay UI to watch games, play against baselines, and inspect checkpoints:
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=. python scripts/serve_ui.py --open --checkpoint-dir checkpoints
+```
+
+The board runs at `http://127.0.0.1:8765`. Human moves are clicks on highlighted squares or wall slots; checkpoint networks can be probed for policy, value, and MCTS visits.
+
 Benchmark sequential versus batched inference:
 
 ```bash
