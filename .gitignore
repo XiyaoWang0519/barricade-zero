@@ -6,3 +6,4 @@ checkpoints/
 runs/
 profiles/
 native/*.so
+*.egg-info/
