@@ -9,6 +9,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
+
+from barricade.backend import load_rules_backend
 from barricade.state import GameState
 
 
@@ -90,73 +93,100 @@ def evaluate_predictions(
         raise ValueError("at least one labeled position is required")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
-    cross_entropy = value_squared_error = value_absolute_error = 0.0
-    top1_correct = top3_correct = 0
-    illegal_mass = 0.0
-    calibration_values = []
+    evaluate_batch = getattr(evaluator, "evaluate_batch", None)
+    evaluate_arrays = getattr(evaluator, "evaluate_batch_arrays", None)
+    supports_mask = False
+    if evaluate_arrays is not None:
+        try:
+            supports_mask = "mask_legal" in inspect.signature(evaluate_arrays).parameters
+        except (TypeError, ValueError):
+            supports_mask = False
+    elif evaluate_batch is not None:
+        try:
+            supports_mask = "mask_legal" in inspect.signature(evaluate_batch).parameters
+        except (TypeError, ValueError):
+            supports_mask = False
+    else:
+        raise TypeError("evaluator must provide evaluate_batch or evaluate_batch_arrays")
+    backend = load_rules_backend()
     epsilon = 1e-12
+    policy_rows: list[np.ndarray] = []
+    value_rows: list[np.ndarray] = []
+    target_policy_rows: list[np.ndarray] = []
+    target_values = np.empty(len(positions), dtype=np.float64)
+    illegal_mass = 0.0
+    offset = 0
     for start in range(0, len(positions), batch_size):
         batch = positions[start : start + batch_size]
-        evaluate_parameters = inspect.signature(evaluator.evaluate_batch).parameters
-        if "mask_legal" in evaluate_parameters:
-            evaluations = evaluator.evaluate_batch(
-                [item.state for item in batch], mask_legal=False
-            )
+        states = [item.state for item in batch]
+        if evaluate_arrays is not None:
+            if supports_mask:
+                policies, values = evaluate_arrays(states, mask_legal=False)
+            else:
+                policies, values = evaluate_arrays(states)
+            policy_batch = np.asarray(policies, dtype=np.float64)
+            value_batch = np.asarray(values, dtype=np.float64).reshape(-1)
         else:
-            evaluations = evaluator.evaluate_batch([item.state for item in batch])
-        for item, (predicted_policy, predicted_value) in zip(batch, evaluations):
-            policy = [float(value) for value in predicted_policy]
-            if len(policy) != item.state.action_size:
-                raise ValueError("evaluator returned a policy with the wrong action size")
-            target = [float(value) for value in item.target_policy]
-            cross_entropy += -sum(
-                probability * math.log(max(policy[action], epsilon))
-                for action, probability in enumerate(target)
-                if probability > 0.0
+            if supports_mask:
+                evaluations = evaluate_batch(states, mask_legal=False)
+            else:
+                evaluations = evaluate_batch(states)
+            policy_batch = np.asarray(
+                [evaluation[0] for evaluation in evaluations], dtype=np.float64
             )
-            target_best = max(range(len(target)), key=target.__getitem__)
-            if max(range(len(policy)), key=policy.__getitem__) == target_best:
-                top1_correct += 1
-            if target_best in sorted(
-                range(len(policy)), key=policy.__getitem__, reverse=True
-            )[:3]:
-                top3_correct += 1
-            legal = set(item.state.legal_actions())
-            illegal_mass += sum(
-                probability
-                for action, probability in enumerate(policy)
-                if action not in legal
+            value_batch = np.asarray(
+                [evaluation[1] for evaluation in evaluations], dtype=np.float64
             )
-            error = float(predicted_value) - float(item.target_value)
-            value_squared_error += error * error
-            value_absolute_error += abs(error)
-            calibration_values.append(
-                (float(predicted_value), float(item.target_value))
-            )
+        if policy_batch.shape[0] != len(batch):
+            raise ValueError("evaluator returned the wrong number of policies")
+        if policy_batch.shape[1] != batch[0].state.action_size:
+            raise ValueError("evaluator returned a policy with the wrong action size")
+        target_batch = np.asarray(
+            [item.target_policy for item in batch], dtype=np.float64
+        )
+        offsets, actions = backend.legal_actions_batch(states)
+        legal_mask = np.zeros(policy_batch.shape, dtype=bool)
+        for index in range(len(batch)):
+            legal_mask[index, actions[offsets[index] : offsets[index + 1]]] = True
+        illegal_mass += float(policy_batch[~legal_mask].sum())
+        policy_rows.append(policy_batch)
+        value_rows.append(value_batch)
+        target_policy_rows.append(target_batch)
+        end = offset + len(batch)
+        target_values[offset:end] = [item.target_value for item in batch]
+        offset = end
+    policies = np.concatenate(policy_rows, axis=0)
+    values = np.concatenate(value_rows, axis=0)
+    targets = np.concatenate(target_policy_rows, axis=0)
+    safe_policies = np.maximum(policies, epsilon)
+    cross_entropy = float(-(targets * np.log(safe_policies)).sum() / len(positions))
+    predicted_best = policies.argmax(axis=1)
+    target_best = targets.argmax(axis=1)
+    top1_correct = int((predicted_best == target_best).sum())
+    topk = min(3, policies.shape[1])
+    top3 = np.argpartition(-policies, topk - 1, axis=1)[:, :topk]
+    top3_correct = int((top3 == target_best[:, None]).any(axis=1).sum())
+    errors = values - target_values
     count = len(positions)
     calibration_error = 0.0
     for bin_index in range(10):
         lower = -1.0 + 0.2 * bin_index
         upper = lower + 0.2
-        values = [
-            (predicted, target)
-            for predicted, target in calibration_values
-            if lower <= predicted < upper
-            or (bin_index == 9 and predicted == 1.0)
-        ]
-        if values:
-            predicted_mean = sum(value[0] for value in values) / len(values)
-            target_mean = sum(value[1] for value in values) / len(values)
-            calibration_error += (
-                len(values) / count * abs(predicted_mean - target_mean)
-            )
+        selected = (values >= lower) & (values < upper)
+        if bin_index == 9:
+            selected |= values == 1.0
+        if not selected.any():
+            continue
+        predicted_mean = float(values[selected].mean())
+        target_mean = float(target_values[selected].mean())
+        calibration_error += float(selected.mean()) * abs(predicted_mean - target_mean)
     return PredictionMetrics(
         positions=count,
-        policy_cross_entropy=cross_entropy / count,
+        policy_cross_entropy=cross_entropy,
         policy_top1_accuracy=top1_correct / count,
         policy_top3_accuracy=top3_correct / count,
-        value_mse=value_squared_error / count,
-        value_mae=value_absolute_error / count,
-        value_calibration_error=calibration_error,
+        value_mse=float(np.mean(errors * errors)),
+        value_mae=float(np.mean(np.abs(errors))),
+        value_calibration_error=float(calibration_error),
         illegal_policy_mass=illegal_mass / count,
     )

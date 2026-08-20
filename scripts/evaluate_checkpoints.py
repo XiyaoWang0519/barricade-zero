@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import random
 
+import torch
+
 from barricade.agents import RandomAgent, ShortestPathAgent
 from barricade.evaluation.arena import play_paired_match
 from barricade.evaluation.checkpoints import (
@@ -221,6 +223,7 @@ def _run_matches(args) -> None:
             "promotion_threshold": args.promotion_threshold,
             "device": args.device,
             "mixed_precision": args.mixed_precision,
+            "torch_threads": args.torch_threads,
         },
         "matches": [result.to_dict() for result in matches],
         "promotion": promotion,
@@ -250,6 +253,12 @@ def _run_predictions(args) -> None:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "candidate": checkpoint_info.to_dict(),
         "dataset": str(Path(args.dataset).resolve()),
+        "settings": {
+            "batch_size": args.batch_size,
+            "device": args.device,
+            "mixed_precision": args.mixed_precision,
+            "torch_threads": args.torch_threads,
+        },
         "metrics": metrics.to_dict(),
     }
     _write_json(args.output, report)
@@ -277,6 +286,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Reproducible Barricade checkpoint evaluation"
     )
+    parser.add_argument("--torch-threads", type=int)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     openings = subparsers.add_parser(
@@ -337,6 +347,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _parser().parse_args()
+    if args.torch_threads is not None:
+        if args.torch_threads <= 0:
+            raise ValueError("torch_threads must be positive")
+        torch.set_num_threads(args.torch_threads)
     args.handler(args)
 
 

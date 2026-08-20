@@ -55,9 +55,11 @@ Additional frozen checkpoint opponents can be repeated:
 ```
 
 Every opening is played twice, with the candidate controlling player 0 once
-and player 1 once. A win is worth 1, a draw 0.5, and a loss 0. Confidence
-intervals are paired bootstraps over opening pairs, so side advantage does not
-artificially inflate the sample size.
+and player 1 once. Neural and other batched-search players share one tree per
+evaluator and play all in-progress games in lockstep, so leaf evaluation is
+batched across openings instead of running at batch size one. A win is worth 1,
+a draw 0.5, and a loss 0. Confidence intervals are paired bootstraps over
+opening pairs, so side advantage does not artificially inflate the sample size.
 
 The champion decision is one of:
 
