@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import random
-from collections import deque
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 import numpy as np
 import torch
@@ -18,22 +17,36 @@ class ReplayBuffer:
     def __init__(self, capacity: int, rng: random.Random | None = None) -> None:
         if capacity <= 0:
             raise ValueError("capacity must be positive")
-        self._items = deque(maxlen=capacity)
+        self.capacity = capacity
+        self._items: list = []
+        self._start = 0
         self.rng = rng or random.Random()
 
     def extend(self, examples: Iterable) -> None:
-        self._items.extend(examples)
+        for example in examples:
+            if len(self._items) < self.capacity:
+                self._items.append(example)
+                continue
+            self._items[self._start] = example
+            self._start = (self._start + 1) % self.capacity
 
     def sample(self, batch_size: int) -> list:
-        if not 0 < batch_size <= len(self._items):
+        count = len(self._items)
+        if not 0 < batch_size <= count:
             raise ValueError("invalid batch size")
-        return self.rng.sample(list(self._items), batch_size)
+        indices = self.rng.sample(range(count), batch_size)
+        if self._start == 0:
+            return [self._items[index] for index in indices]
+        return [self._items[(self._start + index) % self.capacity] for index in indices]
 
     def __len__(self) -> int:
         return len(self._items)
 
     def __iter__(self) -> Iterator:
-        return iter(self._items)
+        count = len(self._items)
+        if self._start == 0:
+            return iter(self._items)
+        return (self._items[(self._start + index) % count] for index in range(count))
 
 
 class Learner:

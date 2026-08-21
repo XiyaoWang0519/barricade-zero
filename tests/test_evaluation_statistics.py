@@ -42,6 +42,14 @@ class EvaluationStatisticsTests(unittest.TestCase):
         self.assertEqual(rejected.status, "reject")
         self.assertEqual(inconclusive.status, "inconclusive")
 
+    def test_paired_bootstrap_is_deterministic_for_a_fixed_seed(self):
+        scores = [index / 19 for index in range(20)]
+        first = paired_bootstrap_interval(scores, resamples=2000, seed=11)
+        second = paired_bootstrap_interval(scores, resamples=2000, seed=11)
+        third = paired_bootstrap_interval(scores, resamples=2000, seed=12)
+        self.assertEqual(first.to_dict(), second.to_dict())
+        self.assertNotEqual(first.lower, third.lower)
+
 
 if __name__ == "__main__":
     unittest.main()

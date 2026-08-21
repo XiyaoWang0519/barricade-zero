@@ -22,6 +22,11 @@ class UniformEvaluator:
             policy[action] = 1.0 / len(legal)
         return policy, 0.0
 
+    def evaluate_batch(
+        self, states: Sequence[GameState], mask_legal: bool = True
+    ) -> list[tuple[list[float], float]]:
+        return [self.evaluate(state) for state in states]
+
 
 @dataclass
 class EdgeStats:

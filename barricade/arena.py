@@ -6,6 +6,7 @@ import random
 from dataclasses import dataclass
 
 from .batched_mcts import BatchedMCTS
+from .match_play import SearchSide, play_two_player_games
 from .mcts import Evaluator, MCTS
 from .state import GameState
 
@@ -94,6 +95,8 @@ class Arena:
     ) -> ArenaResult:
         if games <= 0 or games % 2:
             raise ValueError("arena games must be a positive even number")
+        if all(hasattr(evaluator, "evaluate_batch") for evaluator in (candidate, champion)):
+            return self._play_match_batched(candidate, champion, games)
         candidate_wins = champion_wins = draws = 0
         for game in range(games):
             candidate_first = game % 2 == 0
@@ -102,6 +105,34 @@ class Arena:
             if winner is None:
                 draws += 1
             elif (winner == 0) == candidate_first:
+                candidate_wins += 1
+            else:
+                champion_wins += 1
+        return ArenaResult(
+            candidate_wins,
+            champion_wins,
+            draws,
+            candidate_as_first_games=games // 2,
+            candidate_as_second_games=games // 2,
+        )
+
+    def _play_match_batched(
+        self, candidate: Evaluator, champion: Evaluator, games: int
+    ) -> ArenaResult:
+        initial = GameState.initial(self.board_size, self.walls_per_player)
+        states = [initial] * games
+        seat_to_side = [(0, 1) if game % 2 == 0 else (1, 0) for game in range(games)]
+        sides = (
+            SearchSide(candidate, self.simulations, self.rng.getrandbits(64), states),
+            SearchSide(champion, self.simulations, self.rng.getrandbits(64), states),
+        )
+        outcomes = play_two_player_games(sides, states, seat_to_side, self.max_plies)
+        candidate_wins = champion_wins = draws = 0
+        for game, outcome in enumerate(outcomes):
+            candidate_first = game % 2 == 0
+            if outcome.winner is None:
+                draws += 1
+            elif (outcome.winner == 0) == candidate_first:
                 candidate_wins += 1
             else:
                 champion_wins += 1

@@ -647,3 +647,38 @@ final-eager-generation-vector-noise-rtx4090.json
 final-cudagraph-generation-vector-noise-rtx4090.json
 final-cudagraph-generation-vector-noise-rtx4090.prof
 ```
+
+## CPU two-player match batching, 2026-08-20
+
+Self-play already wave-batches many games against one network. Training arena
+and checkpoint evaluation still played one game at a time, so neural matches
+ran at inference batch size 1. Both now share `barricade.match_play`: all
+in-progress games stay live, each evaluator owns one tree per game, and the
+side to move is searched as a single batch. Idle-opponent trees are advanced
+in Python because native search cannot create a missing child after the other
+player moved.
+
+Fixed 5x5 CPU control, 8 openings or 8 arena games, 4 simulations, 8-channel
+1-block networks, no walls:
+
+| workload | before | after |
+|---|---:|---:|
+| paired neural match wall time | 0.130 s | 0.087 s |
+| paired neural match average batch | 1.00 | 4.93 |
+| paired neural match forward calls | 222 | 45 |
+| training arena wall time | 0.161 s | 0.079 s |
+| training arena average batch | 1.00 | 4.00 |
+| training arena forward calls | 268 | 67 |
+| 10,000-resample paired bootstrap | 0.172 s | 0.008 s |
+| 500 replay samples of 128 from 10k | 0.026 s | 0.015 s |
+
+A 16-opening, 16-simulation CPU profile of the batched evaluator path spends
+almost all remaining time in convolution; tree descent is about 0.2 seconds.
+Further complete-match throughput on this host belongs to GPU inference, which
+this series does not change.
+
+Replay sampling now uses a ring buffer with direct indexing instead of copying
+the deque on every optimizer step. Held-out prediction metrics vectorize
+cross-entropy, top-k, calibration, and native legal-action masks. The
+evaluation CLI accepts `--torch-threads` like the generation and profile
+harnesses.

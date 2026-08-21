@@ -1,11 +1,12 @@
-"""Small dependency-free statistics helpers for paired game evaluation."""
+"""Statistics helpers for paired game evaluation."""
 
 from __future__ import annotations
 
 import math
-import random
 from dataclasses import asdict, dataclass
 from typing import Sequence
+
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ class ConfidenceDecision:
 
 
 def _quantile(sorted_values: Sequence[float], probability: float) -> float:
-    if not sorted_values:
+    if len(sorted_values) == 0:
         raise ValueError("cannot take a quantile of no values")
     if not 0.0 <= probability <= 1.0:
         raise ValueError("probability must be between zero and one")
@@ -69,13 +70,11 @@ def paired_bootstrap_interval(
     if resamples <= 0:
         raise ValueError("resamples must be positive")
 
-    mean = sum(scores) / len(scores)
-    rng = random.Random(seed)
     count = len(scores)
-    sampled_means = sorted(
-        sum(scores[rng.randrange(count)] for _ in range(count)) / count
-        for _ in range(resamples)
-    )
+    mean = float(np.mean(scores))
+    generator = np.random.default_rng(seed)
+    samples = generator.integers(0, count, size=(resamples, count))
+    sampled_means = np.sort(np.asarray(scores, dtype=np.float64)[samples].mean(axis=1))
     tail = (1.0 - confidence) / 2.0
     return ScoreInterval(
         mean=mean,

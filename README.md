@@ -20,6 +20,7 @@ Implemented:
 - Replay buffer and executable 5x5 end-to-end training smoke cycle
 - Neural-network-guided self-play generations
 - Balanced deterministic checkpoint arena and promotion threshold
+- Wave-batched two-player training arena and checkpoint evaluation matches
 - Atomic generation checkpoints with resume support
 - Wave-batched MCTS across concurrent self-play games
 - Inference batching metrics and sequential-vs-batched benchmark

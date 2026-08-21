@@ -6,6 +6,7 @@ import random
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from barricade.match_play import make_factory_side, play_two_player_games
 from barricade.state import GameState
 
 from .openings import OpeningSuite
@@ -89,37 +90,6 @@ class MatchResult:
         }
 
 
-def _play_game(
-    opening_id: str,
-    initial_state: GameState,
-    players: tuple[Any, Any],
-    candidate_player: int,
-    max_plies: int,
-) -> GameResult:
-    state = initial_state
-    repetitions: dict[bytes, int] = {}
-    for ply in range(max_plies):
-        key = state.canonical_key()
-        repetitions[key] = repetitions.get(key, 0) + 1
-        if repetitions[key] >= 3:
-            return GameResult(opening_id, candidate_player, None, ply, "repetition", 0.5)
-        action = int(players[state.turn].choose_action(state))
-        state = state.apply_action(action)
-        for player in players:
-            player.observe_action(action, state)
-        if state.is_terminal():
-            score = 1.0 if state.winner == candidate_player else 0.0
-            return GameResult(
-                opening_id,
-                candidate_player,
-                state.winner,
-                ply + 1,
-                "goal",
-                score,
-            )
-    return GameResult(opening_id, candidate_player, None, max_plies, "max_plies", 0.5)
-
-
 def play_paired_match(
     candidate_factory: Any,
     opponent_factory: Any,
@@ -135,34 +105,49 @@ def play_paired_match(
     if max_plies <= 0:
         raise ValueError("max_plies must be positive")
     rng = random.Random(seed)
-    pair_results = []
-    wins = draws = losses = 0
+    states: list[GameState] = []
+    seat_to_side: list[tuple[int, int]] = []
+    candidate_seeds: list[int] = []
+    opponent_seeds: list[int] = []
+    pair_slots: list[tuple[str, int]] = []
     for opening in suite.openings:
-        games = []
         candidate_seed = rng.getrandbits(64)
         opponent_seed = rng.getrandbits(64)
         for candidate_player in (0, 1):
-            candidate = candidate_factory.create(candidate_seed)
-            opponent = opponent_factory.create(opponent_seed)
-            players = (
-                (candidate, opponent)
-                if candidate_player == 0
-                else (opponent, candidate)
-            )
-            result = _play_game(
-                opening.opening_id,
-                opening.state,
-                players,
-                candidate_player,
-                max_plies,
-            )
-            games.append(result)
-            if result.candidate_score == 1.0:
-                wins += 1
-            elif result.candidate_score == 0.0:
-                losses += 1
-            else:
-                draws += 1
+            states.append(opening.state)
+            seat_to_side.append((0, 1) if candidate_player == 0 else (1, 0))
+            candidate_seeds.append(candidate_seed)
+            opponent_seeds.append(opponent_seed)
+            pair_slots.append((opening.opening_id, candidate_player))
+    sides = (
+        make_factory_side(candidate_factory, states, candidate_seeds),
+        make_factory_side(opponent_factory, states, opponent_seeds),
+    )
+    outcomes = play_two_player_games(sides, states, seat_to_side, max_plies)
+    pair_results = []
+    wins = draws = losses = 0
+    pair_games: dict[str, list[GameResult]] = {}
+    for (opening_id, candidate_player), outcome in zip(pair_slots, outcomes):
+        if outcome.winner is None:
+            score = 0.5
+            draws += 1
+        elif outcome.winner == candidate_player:
+            score = 1.0
+            wins += 1
+        else:
+            score = 0.0
+            losses += 1
+        game = GameResult(
+            opening_id,
+            candidate_player,
+            outcome.winner,
+            outcome.plies,
+            outcome.termination,
+            score,
+        )
+        pair_games.setdefault(opening_id, []).append(game)
+    for opening in suite.openings:
+        games = pair_games[opening.opening_id]
         pair_score = sum(game.candidate_score for game in games) / 2.0
         pair_results.append(
             OpeningPairResult(opening.opening_id, tuple(games), pair_score)
